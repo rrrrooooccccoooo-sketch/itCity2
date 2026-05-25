@@ -1,0 +1,944 @@
+@extends('tenant.layouts.app')
+
+@section('content')
+<div class="container-fluid py-4">
+
+    {{-- Panel Header --}}
+    <div class="mb-4">
+        <h1 class="display-6">Panel Administrativo Ejecutivo</h1>
+        <p class="text-muted">Gestión centralizada con modales · Vista profesional</p>
+        <hr class="my-3">
+    </div>
+
+    {{-- Navigation Tabs --}}
+    <div class="sticky-navigation mb-4">
+        <ul class="nav nav-pills flex-wrap gap-2" role="tablist">
+            <li class="nav-item">
+                <a href="#section-spaces" class="nav-link active small" data-bs-toggle="tab">
+                    <i class="bi bi-door-closed"></i> Espacios físicos
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="#section-branches" class="nav-link small" data-bs-toggle="tab">
+                    <i class="bi bi-diagram-3"></i> Sedes
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="#section-node-types" class="nav-link small" data-bs-toggle="tab">
+                    <i class="bi bi-diagram-2"></i> Tipos de nodo
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="#section-nodes" class="nav-link small" data-bs-toggle="tab">
+                    <i class="bi bi-hdd-network"></i> Nodos
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="#section-monitoring" class="nav-link small" data-bs-toggle="tab">
+                    <i class="bi bi-speedometer2"></i> Monitoreo
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="#section-floor-plans" class="nav-link small" data-bs-toggle="tab">
+                    <i class="bi bi-diagram-3"></i> Planos
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="#section-equipment-brands" class="nav-link small" data-bs-toggle="tab">
+                    <i class="bi bi-box2"></i> Marcas
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="#section-equipment-models" class="nav-link small" data-bs-toggle="tab">
+                    <i class="bi bi-boxes"></i> Modelos
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="#section-assets" class="nav-link small" data-bs-toggle="tab">
+                    <i class="bi bi-hdd"></i> Inventario
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="#section-software" class="nav-link small" data-bs-toggle="tab">
+                    <i class="bi bi-app-indicator"></i> Sistemas
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="#section-relations" class="nav-link small" data-bs-toggle="tab">
+                    <i class="bi bi-share"></i> Relaciones
+                </a>
+            </li>
+        </ul>
+    </div>
+
+    {{-- TAB CONTENT --}}
+    <div class="tab-content">
+
+        {{-- ===== PHYSICAL SPACES SECTION ===== --}}
+        <div class="tab-pane fade show active" id="section-spaces">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h3 class="mb-1">Sedes / Sucursales</h3>
+                    <p class="text-muted small">Ubicaciones físicas de tu organización</p>
+                </div>
+                <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalBranch">
+                    <i class="bi bi-plus-circle"></i> Nueva sede
+                </button>
+            </div>
+
+            <div class="card">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Nombre</th>
+                                <th>Ciudad</th>
+                                <th class="text-center">Espacios</th>
+                                <th style="width: 200px;">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @forelse ($branches as $branch)
+                                <tr>
+                                    <td class="fw-semibold">{{ $branch->name }}</td>
+                                    <td>{{ $branch->address ?? '—' }}</td>
+                                    <td class="text-center"><span class="badge bg-light text-dark">0</span></td>
+                                    <td>
+                                        <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#modalBranch">
+                                            <i class="bi bi-pencil"></i> Editar
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-danger" onclick="if(confirm('¿Eliminar?')) { }">
+                                            <i class="bi bi-trash"></i> Eliminar
+                                        </button>
+                                    </td>
+                                </tr>
+                            @empty
+                                <tr><td colspan="4" class="text-center text-muted py-4">Sin sedes registradas</td></tr>
+                            @endforelse
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {{-- ===== PHYSICAL SPACES SECTION ===== --}}
+        <div class="tab-pane fade" id="section-spaces">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h3 class="mb-1">Espacios Físicos</h3>
+                    <p class="text-muted small">Salas, pisos y áreas donde se encuentran los nodos de red</p>
+                </div>
+                <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalSpace">
+                    <i class="bi bi-plus-circle"></i> Nuevo espacio
+                </button>
+            </div>
+
+            <div class="card">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Nombre</th>
+                                <th>Sede</th>
+                                <th>Tipo</th>
+                                <th class="text-center">Nodos</th>
+                                <th style="width: 200px;">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @forelse ($spaces->take(5) as $space)
+                                <tr>
+                                    <td class="fw-semibold">{{ $space->name }}</td>
+                                    <td>{{ optional($space->branch)->name }}</td>
+                                    <td><span class="badge bg-secondary">{{ $space->space_type }}</span></td>
+                                    <td class="text-center"><span class="badge bg-light text-dark">0</span></td>
+                                    <td>
+                                        <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#modalSpace">
+                                            <i class="bi bi-pencil"></i> Editar
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-danger" onclick="if(confirm('¿Eliminar?')) { }">
+                                            <i class="bi bi-trash"></i> Eliminar
+                                        </button>
+                                    </td>
+                                </tr>
+                            @empty
+                                <tr><td colspan="5" class="text-center text-muted py-4">Sin espacios registrados</td></tr>
+                            @endforelse
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {{-- ===== NODE TYPES SECTION ===== --}}
+        <div class="tab-pane fade" id="section-node-types">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h3 class="mb-1">Tipos de Nodo</h3>
+                    <p class="text-muted small">Define categorías de equipos de red (router, switch, AP, etc.)</p>
+                </div>
+                <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalNodeType">
+                    <i class="bi bi-plus-circle"></i> Nuevo tipo
+                </button>
+            </div>
+
+            <div class="card">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Nombre</th>
+                                <th>Slug</th>
+                                <th class="text-center">Nodos</th>
+                                <th style="width: 200px;">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @forelse ($nodeTypes->take(5) as $nt)
+                                <tr>
+                                    <td class="fw-semibold">{{ $nt->name }}</td>
+                                    <td><code class="text-muted small">{{ $nt->slug }}</code></td>
+                                    <td class="text-center"><span class="badge bg-info">{{ $nt->nodes()->count() }}</span></td>
+                                    <td>
+                                        <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#modalNodeType">
+                                            <i class="bi bi-pencil"></i> Editar
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-danger" onclick="if(confirm('¿Eliminar?')) { }">
+                                            <i class="bi bi-trash"></i> Eliminar
+                                        </button>
+                                    </td>
+                                </tr>
+                            @empty
+                                <tr><td colspan="4" class="text-center text-muted py-4">Sin tipos de nodo registrados</td></tr>
+                            @endforelse
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        {{-- ===== PHYSICAL SPACES SECTION ===== --}}
+        <div class="tab-pane fade" id="section-spaces">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h3 class="mb-1">Espacios Físicos</h3>
+                    <p class="text-muted small">Salas, pisos y áreas donde se encuentran los nodos de red</p>
+                </div>
+                <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalSpace">
+                    <i class="bi bi-plus-circle"></i> Nuevo espacio
+                </button>
+            </div>
+
+            <div class="card">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Nombre</th>
+                                <th>Sede</th>
+                                <th>Tipo</th>
+                                <th class="text-center">Nodos</th>
+                                <th style="width: 200px;">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @forelse ($spaces->take(5) as $space)
+                                <tr>
+                                    <td class="fw-semibold">{{ $space->name }}</td>
+                                    <td>{{ optional($space->branch)->name }}</td>
+                                    <td><span class="badge bg-secondary">{{ $space->space_type }}</span></td>
+                                    <td class="text-center"><span class="badge bg-light text-dark">0</span></td>
+                                    <td>
+                                        <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#modalSpace">
+                                            <i class="bi bi-pencil"></i> Editar
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-danger" onclick="if(confirm('¿Eliminar?')) { }">
+                                            <i class="bi bi-trash"></i> Eliminar
+                                        </button>
+                                    </td>
+                                </tr>
+                            @empty
+                                <tr><td colspan="5" class="text-center text-muted py-4">Sin espacios registrados</td></tr>
+                            @endforelse
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        {{-- ===== NODES SECTION ===== --}}
+        <div class="tab-pane fade" id="section-nodes">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h3 class="mb-1">Nodos de Red</h3>
+                    <p class="text-muted small">Equipos de red: routers, switches, access points, firewalls, etc.</p>
+                </div>
+                <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalNode">
+                    <i class="bi bi-plus-circle"></i> Nuevo nodo
+                </button>
+            </div>
+
+            <div class="card">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Nodo</th>
+                                <th>Tipo · Sede</th>
+                                <th>Espacio</th>
+                                <th>Estado</th>
+                                <th style="width: 200px;">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @forelse ($nodes->take(5) as $node)
+                                <tr>
+                                    <td class="fw-semibold"><code>{{ $node->code }}</code> {{ $node->name }}</td>
+                                    <td>
+                                        {{ optional($node->nodeType)->name }} 
+                                        <span class="text-muted small">({{ optional($node->branch)->name }})</span>
+                                    </td>
+                                    <td>{{ optional($node->physicalSpace)->name ?? '—' }}</td>
+                                    <td><span class="badge bg-success">{{ $node->status }}</span></td>
+                                    <td>
+                                        <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#modalNode">
+                                            <i class="bi bi-pencil"></i> Editar
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-danger" onclick="if(confirm('¿Eliminar?')) { }">
+                                            <i class="bi bi-trash"></i> Eliminar
+                                        </button>
+                                    </td>
+                                </tr>
+                            @empty
+                                <tr><td colspan="5" class="text-center text-muted py-4">Sin nodos registrados</td></tr>
+                            @endforelse
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        {{-- ===== EQUIPMENT BRANDS SECTION ===== --}}
+        <div class="tab-pane fade" id="section-equipment-brands">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h3 class="mb-1">Marcas de Equipo</h3>
+                    <p class="text-muted small">Catálogo de fabricantes (Cisco, Fortinet, Ubiquiti, etc.)</p>
+                </div>
+                <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalBrand">
+                    <i class="bi bi-plus-circle"></i> Nueva marca
+                </button>
+            </div>
+
+            <div class="card">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Nombre</th>
+                                <th class="text-center">Modelos</th>
+                                <th style="width: 220px;">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @forelse ($equipmentBrands as $brand)
+                                <tr>
+                                    <td class="fw-semibold">{{ $brand->name }}</td>
+                                    <td class="text-center"><span class="badge bg-secondary">{{ $brand->equipmentModels()->count() }}</span></td>
+                                    <td>
+                                        <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#modalBrand">
+                                            <i class="bi bi-pencil"></i> Editar
+                                        </button>
+                                        <form method="POST" action="{{ url('/admin/equipment-brands/' . $brand->id) }}" class="d-inline" data-confirm="¿Eliminar?">
+                                            @csrf
+                                            @method('DELETE')
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                <i class="bi bi-trash"></i> Eliminar
+                                            </button>
+                                        </form>
+                                    </td>
+                                </tr>
+                            @empty
+                                <tr><td colspan="3" class="text-center text-muted py-4">Sin marcas registradas</td></tr>
+                            @endforelse
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        {{-- ===== EQUIPMENT MODELS SECTION ===== --}}
+        <div class="tab-pane fade" id="section-equipment-models">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h3 class="mb-1">Modelos de Equipo</h3>
+                    <p class="text-muted small">Especificaciones de modelos por tipo de equipo</p>
+                </div>
+                <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalModel">
+                    <i class="bi bi-plus-circle"></i> Nuevo modelo
+                </button>
+            </div>
+
+            <div class="card">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Modelo</th>
+                                <th>Marca · Tipo</th>
+                                <th class="text-center">Specs</th>
+                                <th style="width: 220px;">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @forelse ($equipmentModels as $model)
+                                <tr>
+                                    <td class="fw-semibold">{{ $model->name }}</td>
+                                    <td>
+                                        {{ optional($model->brand)->name }}
+                                        <span class="text-muted small">({{ $equipmentModelTypes[$model->equipment_type] ?? $model->equipment_type }})</span>
+                                    </td>
+                                    <td class="text-center">
+                                        @if ($model->equipment_type === 'access-point')
+                                            <span class="badge bg-info">{{ $model->coverage_radius_min_m ?? '?' }}-{{ $model->coverage_radius_max_m ?? '?' }}m</span>
+                                        @else
+                                            <span class="text-muted">—</span>
+                                        @endif
+                                    </td>
+                                    <td>
+                                        <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#modalModel">
+                                            <i class="bi bi-pencil"></i> Editar
+                                        </button>
+                                        <form method="POST" action="{{ url('/admin/equipment-models/' . $model->id) }}" class="d-inline" data-confirm="¿Eliminar?">
+                                            @csrf
+                                            @method('DELETE')
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                <i class="bi bi-trash"></i> Eliminar
+                                            </button>
+                                        </form>
+                                    </td>
+                                </tr>
+                            @empty
+                                <tr><td colspan="4" class="text-center text-muted py-4">Sin modelos registrados</td></tr>
+                            @endforelse
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        {{-- ===== MONITORING SECTION ===== --}}
+        <div class="tab-pane fade" id="section-monitoring">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h3 class="mb-1">Monitoreo en Vivo</h3>
+                    <p class="text-muted small">Estado y métricas de agentes en tiempo real</p>
+                </div>
+                <button class="btn btn-primary btn-sm" disabled>
+                    <i class="bi bi-plus-circle"></i> Configurar agente
+                </button>
+            </div>
+
+            <div class="card">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Activo · Hostname</th>
+                                <th>Sede</th>
+                                <th>CPU / RAM / Disco</th>
+                                <th>Último heartbeat</th>
+                                <th>Estado</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td colspan="5" class="text-center text-muted py-4">Sin activos con monitoreo activo</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        {{-- ===== FLOOR PLANS SECTION ===== --}}
+        <div class="tab-pane fade" id="section-floor-plans">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h3 class="mb-1">Planos y Heatmaps</h3>
+                    <p class="text-muted small">Visualización geográfica de espacios y cobertura RF</p>
+                </div>
+                <button class="btn btn-primary btn-sm" disabled>
+                    <i class="bi bi-plus-circle"></i> Nuevo plano
+                </button>
+            </div>
+
+            <div class="card">
+                <div class="text-center text-muted py-5">
+                    <i class="bi bi-diagram-3" style="font-size: 3rem; opacity: 0.3;"></i>
+                    <p class="mt-3">Los planos se gestionan desde el módulo de espacios físicos</p>
+                </div>
+            </div>
+        </div>
+
+        {{-- ===== ASSETS/INVENTORY SECTION ===== --}}
+        <div class="tab-pane fade" id="section-assets">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h3 class="mb-1">Inventario TI</h3>
+                    <p class="text-muted small">Equipamiento: desktops, laptops, servidores, impresoras, etc.</p>
+                </div>
+                <button class="btn btn-primary btn-sm" disabled>
+                    <i class="bi bi-plus-circle"></i> Nuevo activo
+                </button>
+            </div>
+
+            <div class="card">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Etiqueta / Hostname</th>
+                                <th>Tipo</th>
+                                <th>Sede</th>
+                                <th>Estado</th>
+                                <th>Último reporte</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td colspan="5" class="text-center text-muted py-4">Sin activos registrados</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        {{-- ===== SOFTWARE SYSTEMS SECTION ===== --}}
+        <div class="tab-pane fade" id="section-software">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h3 class="mb-1">Sistemas / Aplicaciones</h3>
+                    <p class="text-muted small">Sistemas de software implementados en la infraestructura</p>
+                </div>
+                <button class="btn btn-primary btn-sm" disabled>
+                    <i class="bi bi-plus-circle"></i> Nuevo sistema
+                </button>
+            </div>
+
+            <div class="card">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Nombre</th>
+                                <th>Descripción</th>
+                                <th class="text-center">Nodos</th>
+                                <th>Estado</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td colspan="4" class="text-center text-muted py-4">Sin sistemas registrados</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        {{-- ===== RELATIONS SECTION ===== --}}
+        <div class="tab-pane fade" id="section-relations">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h3 class="mb-1">Relaciones</h3>
+                    <p class="text-muted small">Vínculos entre nodos: enlace primario, respaldo, cascada, etc.</p>
+                </div>
+                <button class="btn btn-primary btn-sm" disabled>
+                    <i class="bi bi-plus-circle"></i> Nueva relación
+                </button>
+            </div>
+
+            <div class="card">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Desde · Hacia</th>
+                                <th>Tipo de relación</th>
+                                <th>Peso</th>
+                                <th style="width: 200px;">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td colspan="4" class="text-center text-muted py-4">Sin relaciones registradas</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+</div>
+
+{{-- ===== MODALS ===== --}}
+
+{{-- MODAL: Branch --}}
+<div class="modal fade" id="modalBranch" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url('/admin/branches') }}">
+                @csrf
+                <div class="modal-header">
+                    <h5 class="modal-title">Nueva sede</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Nombre de la sede</label>
+                        <input type="text" name="name" class="form-control" required placeholder="Ej: Oficina Central">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Dirección</label>
+                        <input type="text" name="address" class="form-control" placeholder="Dirección completa">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{{-- MODAL: NodeType --}}
+<div class="modal fade" id="modalNodeType" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form method="POST" action="{{ url('/admin/node-types') }}">
+                @csrf
+                <div class="modal-header">
+                    <h5 class="modal-title">Nuevo tipo de nodo</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Nombre</label>
+                        <input type="text" name="name" class="form-control" required placeholder="Ej: Router de borde">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Slug (ID único)</label>
+                        <input type="text" name="slug" class="form-control" required placeholder="ej: router-borde">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Descripción</label>
+                        <textarea name="description" class="form-control" rows="3"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{{-- MODAL: Physical Space --}}
+<div class="modal fade" id="modalSpace" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url('/admin/spaces') }}">
+                @csrf
+                <div class="modal-header">
+                    <h5 class="modal-title">Nuevo espacio físico</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Nombre del espacio</label>
+                        <input type="text" name="name" class="form-control" required placeholder="Ej: Sala de servidores">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Sede</label>
+                        <select name="branch_id" class="form-select" required>
+                            <option value="">Selecciona...</option>
+                            @foreach ($branches as $branch)
+                                <option value="{{ $branch->id }}">{{ $branch->name }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Tipo de espacio</label>
+                        <select name="space_type" class="form-select" required>
+                            <option value="room">Sala</option>
+                            <option value="floor">Piso</option>
+                            <option value="area">Área</option>
+                            <option value="cabinet">Gabinete</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{{-- MODAL: Node --}}
+<div class="modal fade" id="modalNode" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form method="POST" action="{{ url('/admin/nodes') }}">
+                @csrf
+                <div class="modal-header">
+                    <h5 class="modal-title">Nuevo nodo de red</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Código / Identificador</label>
+                            <input type="text" name="code" class="form-control" required placeholder="R-001">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Nombre</label>
+                            <input type="text" name="name" class="form-control" required placeholder="Router principal">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Tipo de nodo</label>
+                            <select name="node_type_id" class="form-select" required>
+                                <option value="">Selecciona...</option>
+                                @foreach ($nodeTypes as $nt)
+                                    <option value="{{ $nt->id }}">{{ $nt->name }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Sede</label>
+                            <select name="branch_id" class="form-select" required>
+                                <option value="">Selecciona...</option>
+                                @foreach ($branches as $branch)
+                                    <option value="{{ $branch->id }}">{{ $branch->name }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Espacio físico</label>
+                            <select name="physical_space_id" class="form-select">
+                                <option value="">Sin asignar</option>
+                                @foreach ($spaces as $space)
+                                    <option value="{{ $space->id }}">{{ $space->name }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{{-- MODAL: Equipment Brand --}}
+<div class="modal fade" id="modalBrand" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url('/admin/equipment-brands') }}">
+                @csrf
+                <div class="modal-header">
+                    <h5 class="modal-title">Nueva marca de equipo</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Nombre de la marca</label>
+                        <input type="text" name="brand_name" class="form-control" required maxlength="120" placeholder="Ej: Cisco, Fortinet, Ubiquiti">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{{-- MODAL: Equipment Model --}}
+<div class="modal fade" id="modalModel" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form method="POST" action="{{ url('/admin/equipment-models') }}" id="formModel">
+                @csrf
+                <div class="modal-header">
+                    <h5 class="modal-title">Nuevo modelo de equipo</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Marca</label>
+                            <select name="eqmodel_brand_id" class="form-select" required>
+                                <option value="">Selecciona...</option>
+                                @foreach ($equipmentBrands as $brand)
+                                    <option value="{{ $brand->id }}">{{ $brand->name }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Tipo de equipo</label>
+                            <select name="eqmodel_equipment_type" class="form-select" id="modalModelType" required>
+                                @foreach ($equipmentModelTypes as $etv => $etl)
+                                    <option value="{{ $etv }}">{{ $etl }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Nombre del modelo</label>
+                            <input type="text" name="eqmodel_name" class="form-control" maxlength="120" required placeholder="Ej: UAP-AC-PRO">
+                        </div>
+                        <div id="modalApFields" class="col-12" style="display: none;">
+                            <hr>
+                            <h6 class="text-muted mb-3"><i class="bi bi-broadcast"></i> Parámetros RF</h6>
+                            <div class="row g-2">
+                                <div class="col-md-6">
+                                    <label class="form-label small">Radio mín (m)</label>
+                                    <input type="number" name="eqmodel_radius_min" class="form-control form-control-sm" min="0.1" step="0.1">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label small">Radio máx (m)</label>
+                                    <input type="number" name="eqmodel_radius_max" class="form-control form-control-sm" min="0.1" step="0.1">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label small">Señal dBm</label>
+                                    <input type="number" name="eqmodel_signal_dbm" class="form-control form-control-sm" min="-120" max="0" step="1">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label small">Altura (m)</label>
+                                    <input type="number" name="eqmodel_mount_height_m" class="form-control form-control-sm" min="0.1" step="0.1">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Notas</label>
+                            <textarea name="eqmodel_notes" class="form-control" rows="2"></textarea>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const modelTypeSelect = document.getElementById('modalModelType');
+    const apFields = document.getElementById('modalApFields');
+    
+    modelTypeSelect.addEventListener('change', function () {
+        apFields.style.display = this.value === 'access-point' ? '' : 'none';
+    });
+});
+</script>
+
+<style>
+    .sticky-navigation {
+        position: sticky;
+        top: 0;
+        background: white;
+        z-index: 100;
+        padding: 1rem 0;
+        border-bottom: 1px solid #dee2e6;
+    }
+
+    .nav-pills .nav-link {
+        border-radius: 6px;
+        padding: 0.5rem 1rem;
+        color: #495057;
+        font-weight: 500;
+        transition: all 0.2s;
+    }
+
+    .nav-pills .nav-link:hover {
+        background-color: #e7f1ff;
+        color: #0c63e4;
+    }
+
+    .nav-pills .nav-link.active {
+        background-color: #0c63e4;
+        color: white;
+    }
+
+    .table thead {
+        background-color: #f8f9fa;
+        font-weight: 600;
+        font-size: 0.9rem;
+    }
+
+    .table tbody tr:hover {
+        background-color: #f8f9fa;
+    }
+
+    .card {
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    }
+
+    .badge {
+        font-weight: 600;
+        padding: 0.4rem 0.6rem;
+    }
+
+    .modal-header {
+        background-color: #f8f9fa;
+        border-bottom: 1px solid #dee2e6;
+    }
+
+    .modal-title {
+        font-weight: 600;
+        color: #0f172a;
+    }
+
+    .form-label {
+        font-weight: 500;
+        color: #334155;
+        margin-bottom: 0.5rem;
+    }
+
+    .btn-sm {
+        font-size: 0.875rem;
+    }
+
+    .tab-pane {
+        animation: fadeIn 0.2s;
+    }
+
+    @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+
+    h3 {
+        color: #0f172a;
+        font-weight: 700;
+    }
+
+    .text-muted {
+        color: #64748b !important;
+    }
+
+    code {
+        background-color: #f1f5f9;
+        padding: 0.2rem 0.4rem;
+        border-radius: 3px;
+        font-family: 'Courier New', monospace;
+    }
+</style>
+
+@endsection
