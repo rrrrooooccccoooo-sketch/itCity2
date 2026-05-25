@@ -7,11 +7,13 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Facades\Schema;
+
 class ComputerAsset extends Model
 {
     use HasFactory;
 
-    public static function equipmentTypeOptions(): array
+    public static function defaultEquipmentTypeOptions(): array
     {
         return [
             'desktop' => 'Desktop',
@@ -22,9 +24,37 @@ class ComputerAsset extends Model
             'thin-client' => 'Thin Client',
             'monitor' => 'Monitor',
             'headset' => 'Diadema',
-            'phone' => 'Teléfono',
+            'phone' => 'Telefono',
             'other' => 'Otro',
         ];
+    }
+
+    public static function defaultStatusOptions(): array
+    {
+        return [
+            'in_use' => 'En uso',
+            'stock' => 'En stock',
+            'repair' => 'En reparacion',
+            'retired' => 'Retirado',
+        ];
+    }
+
+    public static function equipmentTypeOptions(): array
+    {
+        if (Schema::hasTable('asset_equipment_type_catalogs')) {
+            $items = AssetEquipmentTypeCatalog::query()
+                ->orderByDesc('is_active')
+                ->orderBy('sort_order')
+                ->orderBy('label')
+                ->pluck('label', 'key')
+                ->toArray();
+
+            if (!empty($items)) {
+                return $items;
+            }
+        }
+
+        return static::defaultEquipmentTypeOptions();
     }
 
     public static function storageTypeOptions(): array
@@ -40,12 +70,20 @@ class ComputerAsset extends Model
 
     public static function statusOptions(): array
     {
-        return [
-            'in_use' => 'En uso',
-            'stock' => 'En stock',
-            'repair' => 'En reparación',
-            'retired' => 'Retirado',
-        ];
+        if (Schema::hasTable('asset_status_catalogs')) {
+            $items = AssetStatusCatalog::query()
+                ->orderByDesc('is_active')
+                ->orderBy('sort_order')
+                ->orderBy('label')
+                ->pluck('label', 'key')
+                ->toArray();
+
+            if (!empty($items)) {
+                return $items;
+            }
+        }
+
+        return static::defaultStatusOptions();
     }
 
     protected $fillable = [

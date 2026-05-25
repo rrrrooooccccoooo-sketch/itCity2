@@ -99,8 +99,11 @@
                             $scopeBranchIds = $scopeBranches->pluck('id')->all();
                             $scopeBranchNames = $scopeBranches->pluck('name')->all();
                             $userProfile = $user->access_profile ?? '';
-                            $userPermissions = data_get($permissionProfiles, $userProfile . '.permissions', []);
-                            $isWildcard = in_array('*', $userPermissions);
+                            $userPermissions = $user->resolvedTenantPermissions();
+                            $isWildcard = in_array('*', (array) data_get($permissionProfiles, $userProfile . '.permissions', []), true);
+                            $overrides = is_array($user->permission_overrides) ? $user->permission_overrides : [];
+                            $overrideAllow = collect((array) ($overrides['allow'] ?? []))->filter()->values()->all();
+                            $overrideDeny = collect((array) ($overrides['deny'] ?? []))->filter()->values()->all();
                             $hasSignature = !empty($user->signature_data_url);
                             $signatureUpdatedAt = $user->signature_updated_at;
                             $signatureUa = trim((string) ($user->signature_last_user_agent ?? ''));
@@ -110,6 +113,8 @@
                                 'topology.manage'  => 'Topología · gestionar',
                                 'inventory.view'   => 'Inventario · ver',
                                 'inventory.manage' => 'Inventario · gestionar',
+                                'inventory.catalogs.view' => 'Catalogos inventario · ver',
+                                'inventory.catalogs.manage' => 'Catalogos inventario · gestionar',
                                 'monitoring.view'  => 'Monitoreo · ver',
                                 'users.view'       => 'Usuarios · ver',
                                 'users.manage'     => 'Usuarios · gestionar',
@@ -182,7 +187,9 @@
                                         data-user-branch-scopes="{{ implode(',', $scopeBranchIds) }}"
                                         data-user-auth-source="{{ $authSource }}"
                                         data-user-is-active="{{ $isActive ? '1' : '0' }}"
-                                        data-user-access-profile="{{ $user->access_profile ?? '' }}">
+                                        data-user-access-profile="{{ $user->access_profile ?? '' }}"
+                                        data-user-permissions-allow="{{ implode(',', $overrideAllow) }}"
+                                        data-user-permissions-deny="{{ implode(',', $overrideDeny) }}">
                                         <i class="bi bi-pencil"></i> Editar
                                     </button>
                                 @endif
@@ -231,6 +238,16 @@
                                                 <span class="badge bg-secondary">Sin perfil asignado</span>
                                             @endif
                                         </div>
+                                        @if (!empty($overrideAllow) || !empty($overrideDeny))
+                                            <div class="small mb-2">
+                                                @if (!empty($overrideAllow))
+                                                    <div class="text-success">Overrides +: {{ implode(', ', $overrideAllow) }}</div>
+                                                @endif
+                                                @if (!empty($overrideDeny))
+                                                    <div class="text-danger">Overrides -: {{ implode(', ', $overrideDeny) }}</div>
+                                                @endif
+                                            </div>
+                                        @endif
                                         <div class="d-flex flex-wrap gap-2">
                                             @if (!$userProfile)
                                                 <span class="perm-badge perm-badge-no"><i class="bi bi-dash-circle"></i> Sin permisos asignados</span>
@@ -337,6 +354,23 @@
                         </select>
                     </div>
                     <div class="mb-3">
+                        <label class="form-label">Permisos adicionales por usuario (Allow)</label>
+                        <select name="user_permissions_allow[]" class="form-select" multiple size="5">
+                            @foreach ($tenantPermissionOptions as $permissionKey => $permissionLabel)
+                                <option value="{{ $permissionKey }}" {{ collect(old('user_permissions_allow', []))->contains($permissionKey) ? 'selected' : '' }}>{{ $permissionLabel }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Permisos denegados por usuario (Deny)</label>
+                        <select name="user_permissions_deny[]" class="form-select" multiple size="5">
+                            @foreach ($tenantPermissionOptions as $permissionKey => $permissionLabel)
+                                <option value="{{ $permissionKey }}" {{ collect(old('user_permissions_deny', []))->contains($permissionKey) ? 'selected' : '' }}>{{ $permissionLabel }}</option>
+                            @endforeach
+                        </select>
+                        <div class="form-text">Deny tiene prioridad sobre perfil y allow.</div>
+                    </div>
+                    <div class="mb-3">
                         <label class="form-label">Sede principal</label>
                         <select name="user_branch_id" class="form-select">
                             <option value="">— Sin campus asignado (solo para admins) —</option>
@@ -425,6 +459,22 @@
                             <option value="">— Sin perfil (admins legacy = acceso total) —</option>
                             @foreach ($permissionProfiles as $profileKey => $profile)
                                 <option value="{{ $profileKey }}">{{ $profile['label'] ?? $profileKey }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Permisos adicionales por usuario (Allow)</label>
+                        <select name="user_permissions_allow[]" id="editUserPermissionsAllow" class="form-select" multiple size="5">
+                            @foreach ($tenantPermissionOptions as $permissionKey => $permissionLabel)
+                                <option value="{{ $permissionKey }}">{{ $permissionLabel }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Permisos denegados por usuario (Deny)</label>
+                        <select name="user_permissions_deny[]" id="editUserPermissionsDeny" class="form-select" multiple size="5">
+                            @foreach ($tenantPermissionOptions as $permissionKey => $permissionLabel)
+                                <option value="{{ $permissionKey }}">{{ $permissionLabel }}</option>
                             @endforeach
                         </select>
                     </div>
@@ -526,6 +576,25 @@
 
         const accessProfileSelect = document.getElementById('editUserAccessProfile');
         accessProfileSelect.value = btn.dataset.userAccessProfile || '';
+
+        const allowRaw = (btn.dataset.userPermissionsAllow || '').trim();
+        const denyRaw = (btn.dataset.userPermissionsDeny || '').trim();
+        const allowItems = allowRaw === '' ? [] : allowRaw.split(',').map(item => item.trim()).filter(Boolean);
+        const denyItems = denyRaw === '' ? [] : denyRaw.split(',').map(item => item.trim()).filter(Boolean);
+
+        const editAllowSelect = document.getElementById('editUserPermissionsAllow');
+        if (editAllowSelect) {
+            Array.from(editAllowSelect.options).forEach(option => {
+                option.selected = allowItems.includes(option.value);
+            });
+        }
+
+        const editDenySelect = document.getElementById('editUserPermissionsDeny');
+        if (editDenySelect) {
+            Array.from(editDenySelect.options).forEach(option => {
+                option.selected = denyItems.includes(option.value);
+            });
+        }
 
         // Clear password fields when opening
         form.querySelector('[name="user_password"]').value              = '';

@@ -4,7 +4,12 @@
 @php
     $canInventoryManage = auth()->user()?->hasTenantPermission('inventory.manage') ?? false;
     $canTopologyManage  = auth()->user()?->hasTenantPermission('topology.manage') ?? false;
+    $canInventoryCatalogsView = (auth()->user()?->hasTenantPermission('inventory.catalogs.view') ?? false) || $canInventoryManage;
+    $canInventoryCatalogsManage = (auth()->user()?->hasTenantPermission('inventory.catalogs.manage') ?? false) || $canInventoryManage;
     $incomingTransferPendingCount = isset($incomingTransferRequests) ? (int) $incomingTransferRequests->count() : 0;
+    $outgoingTransferPendingCount = isset($outgoingTransferRequests) ? (int) $outgoingTransferRequests->count() : 0;
+    $transferHistoryCount = isset($transferRequestHistory) ? (int) $transferRequestHistory->count() : 0;
+    $showTransferPendingPanel = $incomingTransferPendingCount > 0 || $outgoingTransferPendingCount > 0;
 @endphp
 <div class="container-fluid py-4">
 
@@ -803,19 +808,67 @@
 
         {{-- ===== ASSETS/INVENTORY SECTION (9) ===== --}}
         <div class="tab-pane fade" id="section-assets">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <div>
-                    <h3 class="mb-1">Inventario TI</h3>
-                    <p class="text-muted small">Equipamiento: desktops, laptops, servidores, impresoras, etc.</p>
+            <div class="inventory-compact-toolbar mb-2">
+                <div class="small text-muted">Vista compacta: oculta paneles para ver mas equipos en pantalla.</div>
+                <div class="d-flex flex-wrap gap-2 mt-2">
+                    @if ($canInventoryManage)
+                        <button
+                            class="btn btn-sm btn-outline-secondary"
+                            type="button"
+                            data-bs-toggle="collapse"
+                            data-bs-target="#inventoryTransferRequestsPanel"
+                            aria-expanded="false"
+                            aria-controls="inventoryTransferRequestsPanel"
+                        >
+                            Solicitudes pendientes
+                            @if (($incomingTransferPendingCount + $outgoingTransferPendingCount) > 0)
+                                <span class="badge text-bg-danger ms-1">{{ $incomingTransferPendingCount + $outgoingTransferPendingCount }}</span>
+                            @endif
+                        </button>
+                        <button
+                            class="btn btn-sm btn-outline-secondary"
+                            type="button"
+                            data-bs-toggle="collapse"
+                            data-bs-target="#inventoryTransferHistoryPanel"
+                            aria-expanded="false"
+                            aria-controls="inventoryTransferHistoryPanel"
+                        >
+                            Historial traslados
+                            <span class="badge text-bg-light border ms-1">{{ $transferHistoryCount }}</span>
+                        </button>
+                    @endif
+                    <button
+                        class="btn btn-sm btn-outline-secondary"
+                        type="button"
+                        data-bs-toggle="collapse"
+                        data-bs-target="#inventoryFiltersPanel"
+                        aria-expanded="false"
+                        aria-controls="inventoryFiltersPanel"
+                    >
+                        Filtros de busqueda
+                    </button>
+                    @if ($canInventoryCatalogsView)
+                    <button
+                        class="btn btn-sm btn-outline-secondary"
+                        type="button"
+                        data-bs-toggle="collapse"
+                        data-bs-target="#inventoryCatalogsPanel"
+                        aria-expanded="false"
+                        aria-controls="inventoryCatalogsPanel"
+                    >
+                        Catalogos
+                    </button>
+                    @endif
+                    @if ($canInventoryManage)
+                    <button id="btnOpenNewAssetModal" class="btn btn-primary btn-sm ms-md-auto" data-bs-toggle="modal" data-bs-target="#modalAsset">
+                        <i class="bi bi-plus-circle"></i> Nuevo activo
+                    </button>
+                    @endif
                 </div>
-                @if ($canInventoryManage)
-                <button id="btnOpenNewAssetModal" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalAsset">
-                    <i class="bi bi-plus-circle"></i> Nuevo activo
-                </button>
-                @endif
             </div>
 
             @if ($canInventoryManage)
+            <div id="inventoryTransferRequestsPanel" class="collapse">
             <div class="row g-3 mb-3">
                 <div class="col-xl-6">
                     <div class="card h-100">
@@ -933,8 +986,10 @@
                     </div>
                 </div>
             </div>
+            </div>
 
-            <div class="card mb-3">
+            <div id="inventoryTransferHistoryPanel" class="collapse mb-3">
+            <div class="card mb-0">
                 <div class="card-header bg-white fw-semibold">Historial de solicitudes de traslado</div>
                 <div class="card-body">
                     <div class="row g-2 align-items-end mb-2">
@@ -1049,6 +1104,152 @@
                     </div>
                 </div>
             </div>
+            </div>
+            @endif
+
+            @if ($canInventoryCatalogsView)
+            <div id="crud-asset-catalogs" class="mb-3 inventory-catalogs-anchor"></div>
+            <div id="inventoryCatalogsPanel" class="collapse mb-3">
+                <div class="row g-3">
+                    <div class="col-xl-6">
+                        <div class="card h-100">
+                            <div class="card-header bg-white fw-semibold d-flex justify-content-between align-items-center">
+                                <span>Catalogo de tipos de equipo</span>
+                                @if ($canInventoryCatalogsManage)
+                                    <button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#modalCreateEquipmentTypeCatalog">
+                                        <i class="bi bi-plus-circle"></i> Nuevo tipo
+                                    </button>
+                                @endif
+                            </div>
+                            <div class="card-body p-0">
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle mb-0">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th>Clave</th>
+                                                <th>Etiqueta</th>
+                                                <th>Orden</th>
+                                                <th>Activo</th>
+                                                @if ($canInventoryCatalogsManage)
+                                                    <th style="width: 180px;">Acciones</th>
+                                                @endif
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @forelse ($assetEquipmentTypeCatalogs as $catalogItem)
+                                                <tr>
+                                                    <td><code>{{ $catalogItem->key }}</code></td>
+                                                    <td>{{ $catalogItem->label }}</td>
+                                                    <td>{{ $catalogItem->sort_order }}</td>
+                                                    <td>
+                                                        <span class="badge bg-{{ $catalogItem->is_active ? 'success' : 'secondary' }}">
+                                                            {{ $catalogItem->is_active ? 'Si' : 'No' }}
+                                                        </span>
+                                                    </td>
+                                                    @if ($canInventoryCatalogsManage)
+                                                    <td>
+                                                        <button
+                                                            type="button"
+                                                            class="btn btn-sm btn-outline-primary js-edit-equipment-type-catalog"
+                                                            data-bs-toggle="modal"
+                                                            data-bs-target="#modalEditEquipmentTypeCatalog"
+                                                            data-catalog-id="{{ $catalogItem->id }}"
+                                                            data-catalog-key="{{ $catalogItem->key }}"
+                                                            data-catalog-label="{{ $catalogItem->label }}"
+                                                            data-catalog-description="{{ $catalogItem->description ?? '' }}"
+                                                            data-catalog-sort-order="{{ $catalogItem->sort_order }}"
+                                                            data-catalog-is-active="{{ $catalogItem->is_active ? '1' : '0' }}"
+                                                        >
+                                                            Editar
+                                                        </button>
+                                                        <form method="POST" action="{{ url('/admin/asset-equipment-type-catalogs/' . $catalogItem->id) }}" class="d-inline" data-confirm="¿Eliminar tipo de equipo {{ $catalogItem->label }}?">
+                                                            @csrf
+                                                            @method('DELETE')
+                                                            <button type="submit" class="btn btn-sm btn-outline-danger">Eliminar</button>
+                                                        </form>
+                                                    </td>
+                                                    @endif
+                                                </tr>
+                                            @empty
+                                                <tr><td colspan="5" class="text-center text-muted py-3">Sin tipos configurados.</td></tr>
+                                            @endforelse
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-xl-6">
+                        <div class="card h-100">
+                            <div class="card-header bg-white fw-semibold d-flex justify-content-between align-items-center">
+                                <span>Catalogo de estados de activo</span>
+                                @if ($canInventoryCatalogsManage)
+                                    <button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#modalCreateAssetStatusCatalog">
+                                        <i class="bi bi-plus-circle"></i> Nuevo estado
+                                    </button>
+                                @endif
+                            </div>
+                            <div class="card-body p-0">
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle mb-0">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th>Clave</th>
+                                                <th>Etiqueta</th>
+                                                <th>Orden</th>
+                                                <th>Activo</th>
+                                                @if ($canInventoryCatalogsManage)
+                                                    <th style="width: 180px;">Acciones</th>
+                                                @endif
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @forelse ($assetStatusCatalogs as $catalogItem)
+                                                <tr>
+                                                    <td><code>{{ $catalogItem->key }}</code></td>
+                                                    <td>{{ $catalogItem->label }}</td>
+                                                    <td>{{ $catalogItem->sort_order }}</td>
+                                                    <td>
+                                                        <span class="badge bg-{{ $catalogItem->is_active ? 'success' : 'secondary' }}">
+                                                            {{ $catalogItem->is_active ? 'Si' : 'No' }}
+                                                        </span>
+                                                    </td>
+                                                    @if ($canInventoryCatalogsManage)
+                                                    <td>
+                                                        <button
+                                                            type="button"
+                                                            class="btn btn-sm btn-outline-primary js-edit-asset-status-catalog"
+                                                            data-bs-toggle="modal"
+                                                            data-bs-target="#modalEditAssetStatusCatalog"
+                                                            data-catalog-id="{{ $catalogItem->id }}"
+                                                            data-catalog-key="{{ $catalogItem->key }}"
+                                                            data-catalog-label="{{ $catalogItem->label }}"
+                                                            data-catalog-description="{{ $catalogItem->description ?? '' }}"
+                                                            data-catalog-sort-order="{{ $catalogItem->sort_order }}"
+                                                            data-catalog-is-active="{{ $catalogItem->is_active ? '1' : '0' }}"
+                                                        >
+                                                            Editar
+                                                        </button>
+                                                        <form method="POST" action="{{ url('/admin/asset-status-catalogs/' . $catalogItem->id) }}" class="d-inline" data-confirm="¿Eliminar estado {{ $catalogItem->label }}?">
+                                                            @csrf
+                                                            @method('DELETE')
+                                                            <button type="submit" class="btn btn-sm btn-outline-danger">Eliminar</button>
+                                                        </form>
+                                                    </td>
+                                                    @endif
+                                                </tr>
+                                            @empty
+                                                <tr><td colspan="5" class="text-center text-muted py-3">Sin estados configurados.</td></tr>
+                                            @endforelse
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
             @endif
 
             @php
@@ -1059,6 +1260,7 @@
                 $assetFilterModels = $computerAssets->pluck('model')->filter()->unique()->sort()->values();
             @endphp
 
+            <div id="inventoryFiltersPanel" class="collapse">
             <div class="inventory-filter-panel mb-3">
                 <div class="p-3">
                     <div class="small fw-semibold text-muted mb-2">Filtros de búsqueda</div>
@@ -1173,10 +1375,11 @@
                     <div id="inventoryAssetActiveFilters" class="d-flex flex-wrap gap-2 mt-2"></div>
                 </div>
             </div>
+            </div>
 
             <div class="card inventory-results-card">
-                <div class="table-responsive">
-                    <table class="table table-hover mb-0" id="inventoryAssetsTable">
+                <div class="table-responsive" id="inventoryAssetsTableWrapper">
+                    <table class="table table-sm table-hover mb-0" id="inventoryAssetsTable">
                         <thead class="table-light">
                             <tr>
                                 <th>Etiqueta / Hostname</th>
@@ -2166,6 +2369,182 @@
 </div>
 @endif
 
+@if ($canInventoryCatalogsManage)
+<div class="modal fade" id="modalCreateEquipmentTypeCatalog" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url('/admin/asset-equipment-type-catalogs') }}">
+                @csrf
+                <div class="modal-header">
+                    <h5 class="modal-title">Nuevo tipo de equipo</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label">Clave</label>
+                        <input type="text" name="catalog_key" class="form-control" maxlength="60" placeholder="ej: tablet" required>
+                    </div>
+                    <div class="col-md-8">
+                        <label class="form-label">Etiqueta</label>
+                        <input type="text" name="catalog_label" class="form-control" maxlength="120" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Orden</label>
+                        <input type="number" name="catalog_sort_order" class="form-control" value="100" min="0" max="9999">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Estado</label>
+                        <select name="catalog_is_active" class="form-select">
+                            <option value="1" selected>Activo</option>
+                            <option value="0">Inactivo</option>
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Descripcion (opcional)</label>
+                        <textarea name="catalog_description" rows="2" class="form-control" maxlength="255"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Crear tipo</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="modalEditEquipmentTypeCatalog" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url('/admin/asset-equipment-type-catalogs/0') }}" id="modalEditEquipmentTypeCatalogForm">
+                @csrf
+                @method('PUT')
+                <div class="modal-header">
+                    <h5 class="modal-title">Editar tipo de equipo</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label">Clave</label>
+                        <input type="text" id="editEquipmentTypeCatalogKey" class="form-control" readonly>
+                    </div>
+                    <div class="col-md-8">
+                        <label class="form-label">Etiqueta</label>
+                        <input type="text" name="catalog_label" id="editEquipmentTypeCatalogLabel" class="form-control" maxlength="120" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Orden</label>
+                        <input type="number" name="catalog_sort_order" id="editEquipmentTypeCatalogSortOrder" class="form-control" min="0" max="9999">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Estado</label>
+                        <select name="catalog_is_active" id="editEquipmentTypeCatalogIsActive" class="form-select">
+                            <option value="1">Activo</option>
+                            <option value="0">Inactivo</option>
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Descripcion (opcional)</label>
+                        <textarea name="catalog_description" id="editEquipmentTypeCatalogDescription" rows="2" class="form-control" maxlength="255"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Guardar cambios</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="modalCreateAssetStatusCatalog" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url('/admin/asset-status-catalogs') }}">
+                @csrf
+                <div class="modal-header">
+                    <h5 class="modal-title">Nuevo estado de activo</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label">Clave</label>
+                        <input type="text" name="catalog_key" class="form-control" maxlength="60" placeholder="ej: maintenance" required>
+                    </div>
+                    <div class="col-md-8">
+                        <label class="form-label">Etiqueta</label>
+                        <input type="text" name="catalog_label" class="form-control" maxlength="120" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Orden</label>
+                        <input type="number" name="catalog_sort_order" class="form-control" value="100" min="0" max="9999">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Estado</label>
+                        <select name="catalog_is_active" class="form-select">
+                            <option value="1" selected>Activo</option>
+                            <option value="0">Inactivo</option>
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Descripcion (opcional)</label>
+                        <textarea name="catalog_description" rows="2" class="form-control" maxlength="255"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Crear estado</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="modalEditAssetStatusCatalog" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url('/admin/asset-status-catalogs/0') }}" id="modalEditAssetStatusCatalogForm">
+                @csrf
+                @method('PUT')
+                <div class="modal-header">
+                    <h5 class="modal-title">Editar estado de activo</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label">Clave</label>
+                        <input type="text" id="editAssetStatusCatalogKey" class="form-control" readonly>
+                    </div>
+                    <div class="col-md-8">
+                        <label class="form-label">Etiqueta</label>
+                        <input type="text" name="catalog_label" id="editAssetStatusCatalogLabel" class="form-control" maxlength="120" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Orden</label>
+                        <input type="number" name="catalog_sort_order" id="editAssetStatusCatalogSortOrder" class="form-control" min="0" max="9999">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Estado</label>
+                        <select name="catalog_is_active" id="editAssetStatusCatalogIsActive" class="form-select">
+                            <option value="1">Activo</option>
+                            <option value="0">Inactivo</option>
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Descripcion (opcional)</label>
+                        <textarea name="catalog_description" id="editAssetStatusCatalogDescription" rows="2" class="form-control" maxlength="255"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Guardar cambios</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+@endif
+
 {{-- MODAL: Software --}}
 @if ($canTopologyManage)
 <div class="modal fade" id="modalSoftware" tabindex="-1">
@@ -2491,9 +2870,53 @@ document.addEventListener('DOMContentLoaded', function () {
         box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
     }
 
+    .inventory-compact-toolbar {
+        border: 1px dashed #cbd5e1;
+        border-radius: 10px;
+        background: #f8fafc;
+        padding: .65rem .75rem;
+    }
+
+    .inventory-compact-toolbar .btn {
+        border-radius: 999px;
+    }
+
     .inventory-results-card {
         border: 1px solid #dbe4f0;
         box-shadow: 0 2px 10px rgba(15, 23, 42, 0.03);
+    }
+
+    #inventoryAssetsTableWrapper {
+        max-height: 64vh;
+        overflow: auto;
+    }
+
+    #inventoryAssetsTable thead th {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        background: #f8f9fa;
+        padding-top: .42rem;
+        padding-bottom: .42rem;
+        font-size: .8rem;
+    }
+
+    #inventoryAssetsTable tbody td {
+        padding-top: .42rem;
+        padding-bottom: .42rem;
+        font-size: .83rem;
+        line-height: 1.25;
+    }
+
+    #inventoryAssetsTable .btn.btn-sm {
+        padding: .2rem .45rem;
+        font-size: .76rem;
+    }
+
+    @media (max-width: 992px) {
+        #inventoryAssetsTableWrapper {
+            max-height: 58vh;
+        }
     }
 </style>
 
@@ -3006,6 +3429,20 @@ document.addEventListener('DOMContentLoaded', function () {
     const modalReassignCurrentUser = document.getElementById('modalReassignCurrentUser');
     const modalAssetTransferRequestForm = document.getElementById('modalAssetTransferRequestForm');
     const modalAssetTransferRequestSummary = document.getElementById('modalAssetTransferRequestSummary');
+    const modalEditEquipmentTypeCatalog = document.getElementById('modalEditEquipmentTypeCatalog');
+    const modalEditEquipmentTypeCatalogForm = document.getElementById('modalEditEquipmentTypeCatalogForm');
+    const editEquipmentTypeCatalogKey = document.getElementById('editEquipmentTypeCatalogKey');
+    const editEquipmentTypeCatalogLabel = document.getElementById('editEquipmentTypeCatalogLabel');
+    const editEquipmentTypeCatalogSortOrder = document.getElementById('editEquipmentTypeCatalogSortOrder');
+    const editEquipmentTypeCatalogIsActive = document.getElementById('editEquipmentTypeCatalogIsActive');
+    const editEquipmentTypeCatalogDescription = document.getElementById('editEquipmentTypeCatalogDescription');
+    const modalEditAssetStatusCatalog = document.getElementById('modalEditAssetStatusCatalog');
+    const modalEditAssetStatusCatalogForm = document.getElementById('modalEditAssetStatusCatalogForm');
+    const editAssetStatusCatalogKey = document.getElementById('editAssetStatusCatalogKey');
+    const editAssetStatusCatalogLabel = document.getElementById('editAssetStatusCatalogLabel');
+    const editAssetStatusCatalogSortOrder = document.getElementById('editAssetStatusCatalogSortOrder');
+    const editAssetStatusCatalogIsActive = document.getElementById('editAssetStatusCatalogIsActive');
+    const editAssetStatusCatalogDescription = document.getElementById('editAssetStatusCatalogDescription');
     const transferHistorySearchInput = document.getElementById('transferHistorySearchInput');
     const transferHistoryStatusFilter = document.getElementById('transferHistoryStatusFilter');
     const transferHistoryFilterReset = document.getElementById('transferHistoryFilterReset');
@@ -3337,6 +3774,22 @@ document.addEventListener('DOMContentLoaded', function () {
         const hash = String(window.location.hash || '').trim();
         if (!hash) return;
 
+        if (hash === '#crud-asset-catalogs') {
+            const assetsNavLink = document.querySelector('.nav-link[data-bs-toggle="tab"][href="#section-assets"]');
+            if (assetsNavLink && window.bootstrap?.Tab) {
+                const tab = window.bootstrap.Tab.getOrCreateInstance(assetsNavLink);
+                tab.show();
+            }
+
+            const catalogsPanel = document.getElementById('inventoryCatalogsPanel');
+            if (catalogsPanel && window.bootstrap?.Collapse) {
+                const collapse = window.bootstrap.Collapse.getOrCreateInstance(catalogsPanel, { toggle: false });
+                collapse.show();
+            }
+
+            return;
+        }
+
         const navLink = document.querySelector(`.nav-link[data-bs-toggle="tab"][href="${hash}"]`);
         if (!navLink || !window.bootstrap?.Tab) return;
 
@@ -3650,6 +4103,36 @@ document.addEventListener('DOMContentLoaded', function () {
             openAssetModalForTransferRequest(row);
         });
     });
+
+    if (modalEditEquipmentTypeCatalog) {
+        modalEditEquipmentTypeCatalog.addEventListener('show.bs.modal', (event) => {
+            const trigger = event.relatedTarget;
+            if (!trigger || !modalEditEquipmentTypeCatalogForm) return;
+
+            const catalogId = String(trigger.dataset.catalogId || '').trim();
+            modalEditEquipmentTypeCatalogForm.action = `{{ url('/admin/asset-equipment-type-catalogs') }}/${catalogId}`;
+            if (editEquipmentTypeCatalogKey) editEquipmentTypeCatalogKey.value = String(trigger.dataset.catalogKey || '');
+            if (editEquipmentTypeCatalogLabel) editEquipmentTypeCatalogLabel.value = String(trigger.dataset.catalogLabel || '');
+            if (editEquipmentTypeCatalogSortOrder) editEquipmentTypeCatalogSortOrder.value = String(trigger.dataset.catalogSortOrder || '100');
+            if (editEquipmentTypeCatalogIsActive) editEquipmentTypeCatalogIsActive.value = String(trigger.dataset.catalogIsActive || '1');
+            if (editEquipmentTypeCatalogDescription) editEquipmentTypeCatalogDescription.value = String(trigger.dataset.catalogDescription || '');
+        });
+    }
+
+    if (modalEditAssetStatusCatalog) {
+        modalEditAssetStatusCatalog.addEventListener('show.bs.modal', (event) => {
+            const trigger = event.relatedTarget;
+            if (!trigger || !modalEditAssetStatusCatalogForm) return;
+
+            const catalogId = String(trigger.dataset.catalogId || '').trim();
+            modalEditAssetStatusCatalogForm.action = `{{ url('/admin/asset-status-catalogs') }}/${catalogId}`;
+            if (editAssetStatusCatalogKey) editAssetStatusCatalogKey.value = String(trigger.dataset.catalogKey || '');
+            if (editAssetStatusCatalogLabel) editAssetStatusCatalogLabel.value = String(trigger.dataset.catalogLabel || '');
+            if (editAssetStatusCatalogSortOrder) editAssetStatusCatalogSortOrder.value = String(trigger.dataset.catalogSortOrder || '100');
+            if (editAssetStatusCatalogIsActive) editAssetStatusCatalogIsActive.value = String(trigger.dataset.catalogIsActive || '1');
+            if (editAssetStatusCatalogDescription) editAssetStatusCatalogDescription.value = String(trigger.dataset.catalogDescription || '');
+        });
+    }
 
     if (adModalReassignBtn) {
         adModalReassignBtn.addEventListener('click', () => {

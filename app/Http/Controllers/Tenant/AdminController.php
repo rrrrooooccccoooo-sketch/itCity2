@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Tenant;
 
 use App\Http\Controllers\Controller;
+use App\Models\AssetEquipmentTypeCatalog;
+use App\Models\AssetStatusCatalog;
 use App\Models\Branch;
 use App\Models\ComputerAsset;
 use App\Models\ComputerAssetTransferRequest;
@@ -163,6 +165,14 @@ class AdminController extends Controller
             ->values();
         $equipmentBrands = EquipmentBrand::query()->orderBy('name')->get();
         $equipmentModels = EquipmentModel::query()->with('brand:id,name')->orderBy('name')->get();
+        $assetEquipmentTypeCatalogs = AssetEquipmentTypeCatalog::query()
+            ->orderBy('sort_order')
+            ->orderBy('label')
+            ->get();
+        $assetStatusCatalogs = AssetStatusCatalog::query()
+            ->orderBy('sort_order')
+            ->orderBy('label')
+            ->get();
         $apModels = $equipmentModels->filter(fn ($m) => $m->equipment_type === 'access-point')->values();
         $monitoringAssets = ComputerAsset::query()
             ->with(['branch:id,name', 'node:id,name'])
@@ -287,6 +297,8 @@ class AdminController extends Controller
             'editingRelation' => $editingRelation,
             'equipmentBrands' => $equipmentBrands,
             'equipmentModels' => $equipmentModels,
+            'assetEquipmentTypeCatalogs' => $assetEquipmentTypeCatalogs,
+            'assetStatusCatalogs' => $assetStatusCatalogs,
             'apModels' => $apModels,
             'equipmentModelTypes' => EquipmentModel::equipmentTypeOptions(),
             'editingEquipmentBrand' => $request->filled('edit_brand')
@@ -2348,6 +2360,110 @@ SVG;
         return $this->redirectToCrud('crud-equipment-models', 'Modelo eliminado correctamente.');
     }
 
+    public function storeAssetEquipmentTypeCatalog(Request $request): RedirectResponse
+    {
+        $validated = $request->validate([
+            'catalog_key' => ['required', 'string', 'max:60', 'regex:/^[a-z0-9\-]+$/', 'unique:asset_equipment_type_catalogs,key'],
+            'catalog_label' => ['required', 'string', 'max:120'],
+            'catalog_description' => ['nullable', 'string', 'max:255'],
+            'catalog_sort_order' => ['nullable', 'integer', 'min:0', 'max:9999'],
+            'catalog_is_active' => ['nullable', 'boolean'],
+        ]);
+
+        AssetEquipmentTypeCatalog::query()->create([
+            'key' => Str::lower(trim((string) $validated['catalog_key'])),
+            'label' => trim((string) $validated['catalog_label']),
+            'description' => trim((string) ($validated['catalog_description'] ?? '')) ?: null,
+            'sort_order' => (int) ($validated['catalog_sort_order'] ?? 100),
+            'is_active' => $request->boolean('catalog_is_active', true),
+        ]);
+
+        return $this->redirectToCrud('crud-asset-catalogs', 'Tipo de equipo agregado al catálogo.');
+    }
+
+    public function updateAssetEquipmentTypeCatalog(Request $request, AssetEquipmentTypeCatalog $catalog): RedirectResponse
+    {
+        $validated = $request->validate([
+            'catalog_label' => ['required', 'string', 'max:120'],
+            'catalog_description' => ['nullable', 'string', 'max:255'],
+            'catalog_sort_order' => ['nullable', 'integer', 'min:0', 'max:9999'],
+            'catalog_is_active' => ['nullable', 'boolean'],
+        ]);
+
+        $catalog->update([
+            'label' => trim((string) $validated['catalog_label']),
+            'description' => trim((string) ($validated['catalog_description'] ?? '')) ?: null,
+            'sort_order' => (int) ($validated['catalog_sort_order'] ?? $catalog->sort_order ?? 100),
+            'is_active' => $request->boolean('catalog_is_active'),
+        ]);
+
+        return $this->redirectToCrud('crud-asset-catalogs', 'Tipo de equipo actualizado.');
+    }
+
+    public function destroyAssetEquipmentTypeCatalog(AssetEquipmentTypeCatalog $catalog): RedirectResponse
+    {
+        $isUsed = ComputerAsset::query()->where('equipment_type', $catalog->key)->exists();
+        if ($isUsed) {
+            return $this->redirectToCrud('crud-asset-catalogs', 'No se puede eliminar un tipo de equipo que ya está en uso.');
+        }
+
+        $catalog->delete();
+
+        return $this->redirectToCrud('crud-asset-catalogs', 'Tipo de equipo eliminado del catálogo.');
+    }
+
+    public function storeAssetStatusCatalog(Request $request): RedirectResponse
+    {
+        $validated = $request->validate([
+            'catalog_key' => ['required', 'string', 'max:60', 'regex:/^[a-z0-9\_\-]+$/', 'unique:asset_status_catalogs,key'],
+            'catalog_label' => ['required', 'string', 'max:120'],
+            'catalog_description' => ['nullable', 'string', 'max:255'],
+            'catalog_sort_order' => ['nullable', 'integer', 'min:0', 'max:9999'],
+            'catalog_is_active' => ['nullable', 'boolean'],
+        ]);
+
+        AssetStatusCatalog::query()->create([
+            'key' => Str::lower(trim((string) $validated['catalog_key'])),
+            'label' => trim((string) $validated['catalog_label']),
+            'description' => trim((string) ($validated['catalog_description'] ?? '')) ?: null,
+            'sort_order' => (int) ($validated['catalog_sort_order'] ?? 100),
+            'is_active' => $request->boolean('catalog_is_active', true),
+        ]);
+
+        return $this->redirectToCrud('crud-asset-catalogs', 'Estado de activo agregado al catálogo.');
+    }
+
+    public function updateAssetStatusCatalog(Request $request, AssetStatusCatalog $catalog): RedirectResponse
+    {
+        $validated = $request->validate([
+            'catalog_label' => ['required', 'string', 'max:120'],
+            'catalog_description' => ['nullable', 'string', 'max:255'],
+            'catalog_sort_order' => ['nullable', 'integer', 'min:0', 'max:9999'],
+            'catalog_is_active' => ['nullable', 'boolean'],
+        ]);
+
+        $catalog->update([
+            'label' => trim((string) $validated['catalog_label']),
+            'description' => trim((string) ($validated['catalog_description'] ?? '')) ?: null,
+            'sort_order' => (int) ($validated['catalog_sort_order'] ?? $catalog->sort_order ?? 100),
+            'is_active' => $request->boolean('catalog_is_active'),
+        ]);
+
+        return $this->redirectToCrud('crud-asset-catalogs', 'Estado de activo actualizado.');
+    }
+
+    public function destroyAssetStatusCatalog(AssetStatusCatalog $catalog): RedirectResponse
+    {
+        $isUsed = ComputerAsset::query()->where('status', $catalog->key)->exists();
+        if ($isUsed) {
+            return $this->redirectToCrud('crud-asset-catalogs', 'No se puede eliminar un estado que ya está en uso.');
+        }
+
+        $catalog->delete();
+
+        return $this->redirectToCrud('crud-asset-catalogs', 'Estado de activo eliminado del catálogo.');
+    }
+
     public function storeComputerAsset(Request $request): RedirectResponse
     {
         $validated = $this->validateComputerAsset($request);
@@ -3545,6 +3661,40 @@ SVG;
         return redirect()->to('/admin#' . $anchor)->with('status', $status);
     }
 
+    private function tenantPermissionOptions(): array
+    {
+        $labels = [
+            'tenant.admin' => 'Administracion tenant',
+            'users.view' => 'Usuarios ver',
+            'users.manage' => 'Usuarios gestionar',
+            'users.reset' => 'Usuarios reset',
+            'inventory.view' => 'Inventario ver',
+            'inventory.manage' => 'Inventario gestionar',
+            'inventory.catalogs.view' => 'Catalogos inventario ver',
+            'inventory.catalogs.manage' => 'Catalogos inventario gestionar',
+            'monitoring.view' => 'Monitoreo ver',
+            'topology.view' => 'Topologia ver',
+            'topology.manage' => 'Topologia gestionar',
+        ];
+
+        $profiles = (array) config('tenant_permissions.profiles', []);
+        foreach ($profiles as $profile) {
+            foreach ((array) data_get($profile, 'permissions', []) as $permission) {
+                if (!is_string($permission) || $permission === '' || $permission === '*') {
+                    continue;
+                }
+
+                if (!array_key_exists($permission, $labels)) {
+                    $labels[$permission] = $permission;
+                }
+            }
+        }
+
+        ksort($labels);
+
+        return $labels;
+    }
+
     public function saveMySignature(Request $request): RedirectResponse
     {
         $validated = $request->validate([
@@ -3606,8 +3756,9 @@ SVG;
         $users    = User::query()->with(['branch', 'branchScopes'])->orderBy('name')->get();
         $branches = Branch::query()->orderBy('name')->get();
         $permissionProfiles = (array) config('tenant_permissions.profiles', []);
+        $tenantPermissionOptions = $this->tenantPermissionOptions();
 
-        return view('tenant.admin.users', compact('users', 'branches', 'permissionProfiles'));
+        return view('tenant.admin.users', compact('users', 'branches', 'permissionProfiles', 'tenantPermissionOptions'));
     }
 
     public function storeUser(Request $request): RedirectResponse
@@ -3633,6 +3784,10 @@ SVG;
             'user_auth_source'       => ['required', 'in:local,ad'],
             'user_is_active'         => ['required', 'boolean'],
             'user_access_profile'    => ['nullable', 'string', Rule::in(array_keys((array) config('tenant_permissions.profiles', [])))],
+            'user_permissions_allow' => ['nullable', 'array'],
+            'user_permissions_allow.*' => ['string', Rule::in(array_keys($this->tenantPermissionOptions()))],
+            'user_permissions_deny' => ['nullable', 'array'],
+            'user_permissions_deny.*' => ['string', Rule::in(array_keys($this->tenantPermissionOptions()))],
         ]);
 
         $branchScopeIds = collect((array) ($validated['user_branch_scope_ids'] ?? []))
@@ -3662,6 +3817,10 @@ SVG;
             'auth_source' => $validated['user_auth_source'],
             'is_active' => (bool) $validated['user_is_active'],
             'access_profile' => $validated['user_access_profile'] ?? null,
+            'permission_overrides' => [
+                'allow' => array_values(array_unique((array) ($validated['user_permissions_allow'] ?? []))),
+                'deny' => array_values(array_unique((array) ($validated['user_permissions_deny'] ?? []))),
+            ],
         ]);
 
         $user->branchScopes()->sync($branchScopeIds->all());
@@ -3686,6 +3845,10 @@ SVG;
             'user_auth_source' => ['required', 'in:local,ad'],
             'user_is_active' => ['required', 'boolean'],
             'user_access_profile' => ['nullable', 'string', Rule::in(array_keys((array) config('tenant_permissions.profiles', [])))],
+            'user_permissions_allow' => ['nullable', 'array'],
+            'user_permissions_allow.*' => ['string', Rule::in(array_keys($this->tenantPermissionOptions()))],
+            'user_permissions_deny' => ['nullable', 'array'],
+            'user_permissions_deny.*' => ['string', Rule::in(array_keys($this->tenantPermissionOptions()))],
         ]);
 
         $branchScopeIds = collect((array) ($validated['user_branch_scope_ids'] ?? []))
@@ -3712,6 +3875,10 @@ SVG;
             'auth_source' => $validated['user_auth_source'],
             'is_active' => (bool) $validated['user_is_active'],
             'access_profile' => $validated['user_access_profile'] ?? null,
+            'permission_overrides' => [
+                'allow' => array_values(array_unique((array) ($validated['user_permissions_allow'] ?? []))),
+                'deny' => array_values(array_unique((array) ($validated['user_permissions_deny'] ?? []))),
+            ],
         ];
 
         if (!empty($validated['user_password'])) {

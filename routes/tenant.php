@@ -155,5 +155,15 @@ Route::middleware([
             Route::put('/equipment-models/{equipmentModel}', [AdminController::class, 'updateEquipmentModel']);
             Route::delete('/equipment-models/{equipmentModel}', [AdminController::class, 'destroyEquipmentModel']);
         });
+
+        Route::middleware('tenant.can:inventory.catalogs.manage')->group(function () {
+            Route::post('/asset-equipment-type-catalogs', [AdminController::class, 'storeAssetEquipmentTypeCatalog']);
+            Route::put('/asset-equipment-type-catalogs/{catalog}', [AdminController::class, 'updateAssetEquipmentTypeCatalog']);
+            Route::delete('/asset-equipment-type-catalogs/{catalog}', [AdminController::class, 'destroyAssetEquipmentTypeCatalog']);
+
+            Route::post('/asset-status-catalogs', [AdminController::class, 'storeAssetStatusCatalog']);
+            Route::put('/asset-status-catalogs/{catalog}', [AdminController::class, 'updateAssetStatusCatalog']);
+            Route::delete('/asset-status-catalogs/{catalog}', [AdminController::class, 'destroyAssetStatusCatalog']);
+        });
     });
 });

@@ -85,7 +85,13 @@ class User extends Authenticatable
             return false;
         }
 
-        if ($this->role === 'admin' && empty($this->access_profile)) {
+        [$explicitAllow, $explicitDeny] = $this->normalizedPermissionOverrides();
+
+        if (in_array($permission, $explicitDeny, true)) {
+            return false;
+        }
+
+        if ($this->role === 'admin' && empty($this->access_profile) && empty($explicitAllow) && empty($explicitDeny)) {
             return true;
         }
 
@@ -100,6 +106,19 @@ class User extends Authenticatable
         $profileKey = (string) ($this->access_profile ?? '');
         $profilePermissions = (array) data_get($profiles, $profileKey . '.permissions', []);
 
+        [$explicitAllow, $explicitDeny] = $this->normalizedPermissionOverrides();
+
+        $base = array_values(array_unique(array_filter(array_merge($profilePermissions, $explicitAllow), fn ($item) => is_string($item) && $item !== '')));
+
+        if (empty($explicitDeny)) {
+            return $base;
+        }
+
+        return array_values(array_filter($base, fn ($item) => !in_array($item, $explicitDeny, true)));
+    }
+
+    private function normalizedPermissionOverrides(): array
+    {
         $overrides = $this->permission_overrides;
         if (!is_array($overrides)) {
             $overrides = [];
@@ -115,13 +134,7 @@ class User extends Authenticatable
             fn ($item) => is_string($item) && $item !== ''
         ));
 
-        $base = array_values(array_unique(array_filter(array_merge($profilePermissions, $explicitAllow), fn ($item) => is_string($item) && $item !== '')));
-
-        if (empty($explicitDeny)) {
-            return $base;
-        }
-
-        return array_values(array_filter($base, fn ($item) => !in_array($item, $explicitDeny, true)));
+        return [$explicitAllow, $explicitDeny];
     }
 
     public function effectiveBranchScopeIds(): ?array
