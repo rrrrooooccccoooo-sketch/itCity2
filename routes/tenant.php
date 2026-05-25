@@ -141,6 +141,8 @@ Route::middleware([
 
             Route::post('/computer-assets', [AdminController::class, 'storeComputerAsset']);
             Route::post('/computer-assets/{computerAsset}/reassign', [AdminController::class, 'reassignComputerAsset']);
+            Route::post('/computer-assets/{computerAsset}/transfer-requests', [AdminController::class, 'requestComputerAssetTransfer']);
+            Route::post('/computer-assets/transfer-requests/{transferRequest}/decision', [AdminController::class, 'decideComputerAssetTransferRequest']);
             Route::put('/computer-assets/{computerAsset}', [AdminController::class, 'updateComputerAsset']);
             Route::delete('/computer-assets/{computerAsset}', [AdminController::class, 'destroyComputerAsset']);
             Route::get('/computer-assets/{computerAsset}/responsiva', [AdminController::class, 'downloadComputerAssetResponsiva']);

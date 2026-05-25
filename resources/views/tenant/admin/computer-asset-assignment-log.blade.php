@@ -154,6 +154,24 @@
                         </div>
                     @endif
 
+                    @if (!empty($entry['transfer_request_id']) || !empty($entry['transfer_from_branch']) || !empty($entry['transfer_to_branch']) || !empty($entry['transfer_from_user']) || !empty($entry['transfer_to_user']))
+                        <div class="muted" style="margin-bottom:8px; font-size:13px;">
+                            <strong>Traspaso:</strong>
+                            @if (!empty($entry['transfer_request_id']))
+                                Solicitud #{{ $entry['transfer_request_id'] }} ·
+                            @endif
+                            @if (!empty($entry['transfer_priority']))
+                                Prioridad {{ strtoupper((string) $entry['transfer_priority']) }} ·
+                            @endif
+                            @if (!empty($entry['transfer_from_user']) || !empty($entry['transfer_to_user']))
+                                {{ $entry['transfer_from_user'] ?: 'N/A' }} → {{ $entry['transfer_to_user'] ?: 'N/A' }} ·
+                            @endif
+                            @if (!empty($entry['transfer_from_branch']) || !empty($entry['transfer_to_branch']))
+                                {{ $entry['transfer_from_branch'] ?: 'N/A' }} → {{ $entry['transfer_to_branch'] ?: 'N/A' }}
+                            @endif
+                        </div>
+                    @endif
+
                     <div class="entry-grid">
                         <div class="entry-item"><strong>Causa de cambio:</strong> {{ $displayChangeReason }}</div>
                         <div class="entry-item"><strong>Numero de serie:</strong> {{ $entry['serial_number'] ?: '—' }}</div>

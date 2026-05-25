@@ -4,6 +4,7 @@
 @php
     $canInventoryManage = auth()->user()?->hasTenantPermission('inventory.manage') ?? false;
     $canTopologyManage  = auth()->user()?->hasTenantPermission('topology.manage') ?? false;
+    $incomingTransferPendingCount = isset($incomingTransferRequests) ? (int) $incomingTransferRequests->count() : 0;
 @endphp
 <div class="container-fluid py-4">
 
@@ -37,6 +38,9 @@
             <li class="nav-item">
                 <a href="#section-assets" class="nav-link small" data-bs-toggle="tab">
                     <i class="bi bi-hdd"></i> Inventario
+                    @if ($canInventoryManage && $incomingTransferPendingCount > 0)
+                        <span class="badge text-bg-danger ms-1">{{ $incomingTransferPendingCount }}</span>
+                    @endif
                 </a>
             </li>
             <li class="nav-item">
@@ -811,6 +815,242 @@
                 @endif
             </div>
 
+            @if ($canInventoryManage)
+            <div class="row g-3 mb-3">
+                <div class="col-xl-6">
+                    <div class="card h-100">
+                        <div class="card-header bg-white fw-semibold">Solicitudes recibidas (pendientes)</div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-sm align-middle mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Activo</th>
+                                            <th>Origen → Destino</th>
+                                            <th>Prioridad</th>
+                                            <th>Motivo</th>
+                                            <th style="width: 170px;">Acción</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                    @forelse ($incomingTransferRequests as $transferRequest)
+                                        @php
+                                            $assetLabel = trim((string) (($transferRequest->computerAsset?->asset_tag ?? '') . ' ' . ($transferRequest->computerAsset?->hostname ?? '')));
+                                            $priorityKey = Str::lower((string) ($transferRequest->priority ?: 'normal'));
+                                            $priorityBadgeClass = match ($priorityKey) {
+                                                'urgent' => 'danger',
+                                                'high' => 'warning text-dark',
+                                                default => 'secondary',
+                                            };
+                                            $priorityLabel = match ($priorityKey) {
+                                                'urgent' => 'URGENTE',
+                                                'high' => 'ALTA',
+                                                default => 'NORMAL',
+                                            };
+                                        @endphp
+                                        <tr>
+                                            <td>
+                                                <div class="fw-semibold">{{ $assetLabel !== '' ? $assetLabel : ('Activo #' . $transferRequest->computer_asset_id) }}</div>
+                                                <div class="small text-muted">Solicitud #{{ $transferRequest->id }} · {{ optional($transferRequest->requested_at)->format('d/m H:i') }}</div>
+                                            </td>
+                                            <td class="small">
+                                                <div>{{ $transferRequest->requested_by_name ?: 'Sistema' }}</div>
+                                                <div class="text-muted">{{ optional($transferRequest->requestedFromBranch)->name ?: 'N/A' }} → {{ optional($transferRequest->requestedToBranch)->name ?: 'N/A' }}</div>
+                                            </td>
+                                            <td><span class="badge text-bg-{{ $priorityBadgeClass }}">{{ $priorityLabel }}</span></td>
+                                            <td class="small">{{ $transferRequest->reason }}</td>
+                                            <td>
+                                                <form method="POST" action="{{ url('/admin/computer-assets/transfer-requests/' . $transferRequest->id . '/decision') }}" class="d-inline">
+                                                    @csrf
+                                                    <input type="hidden" name="decision" value="accepted">
+                                                    <button type="submit" class="btn btn-sm btn-success">Aceptar</button>
+                                                </form>
+                                                <form method="POST" action="{{ url('/admin/computer-assets/transfer-requests/' . $transferRequest->id . '/decision') }}" class="d-inline">
+                                                    @csrf
+                                                    <input type="hidden" name="decision" value="rejected">
+                                                    <button type="submit" class="btn btn-sm btn-outline-danger">Rechazar</button>
+                                                </form>
+                                            </td>
+                                        </tr>
+                                    @empty
+                                        <tr><td colspan="5" class="text-center text-muted py-3">No tienes solicitudes pendientes por atender.</td></tr>
+                                    @endforelse
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-xl-6">
+                    <div class="card h-100">
+                        <div class="card-header bg-white fw-semibold">Solicitudes enviadas (pendientes)</div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-sm align-middle mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Activo</th>
+                                            <th>Destino</th>
+                                            <th>Prioridad</th>
+                                            <th>Motivo</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                    @forelse ($outgoingTransferRequests as $transferRequest)
+                                        @php
+                                            $assetLabel = trim((string) (($transferRequest->computerAsset?->asset_tag ?? '') . ' ' . ($transferRequest->computerAsset?->hostname ?? '')));
+                                            $priorityKey = Str::lower((string) ($transferRequest->priority ?: 'normal'));
+                                            $priorityBadgeClass = match ($priorityKey) {
+                                                'urgent' => 'danger',
+                                                'high' => 'warning text-dark',
+                                                default => 'secondary',
+                                            };
+                                            $priorityLabel = match ($priorityKey) {
+                                                'urgent' => 'URGENTE',
+                                                'high' => 'ALTA',
+                                                default => 'NORMAL',
+                                            };
+                                        @endphp
+                                        <tr>
+                                            <td>
+                                                <div class="fw-semibold">{{ $assetLabel !== '' ? $assetLabel : ('Activo #' . $transferRequest->computer_asset_id) }}</div>
+                                                <div class="small text-muted">Solicitud #{{ $transferRequest->id }} · {{ optional($transferRequest->requested_at)->format('d/m H:i') }}</div>
+                                            </td>
+                                            <td class="small">
+                                                <div>{{ $transferRequest->requested_to_user_name ?: 'Sin agente destino' }}</div>
+                                                <div class="text-muted">{{ optional($transferRequest->requestedToBranch)->name ?: 'N/A' }}</div>
+                                            </td>
+                                            <td><span class="badge text-bg-{{ $priorityBadgeClass }}">{{ $priorityLabel }}</span></td>
+                                            <td class="small">{{ $transferRequest->reason }}</td>
+                                        </tr>
+                                    @empty
+                                        <tr><td colspan="4" class="text-center text-muted py-3">No has enviado solicitudes pendientes.</td></tr>
+                                    @endforelse
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card mb-3">
+                <div class="card-header bg-white fw-semibold">Historial de solicitudes de traslado</div>
+                <div class="card-body">
+                    <div class="row g-2 align-items-end mb-2">
+                        <div class="col-md-7">
+                            <label class="form-label small mb-1">Buscar en historial</label>
+                            <input type="text" id="transferHistorySearchInput" class="form-control form-control-sm" placeholder="Activo, agente, sede o motivo...">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label small mb-1">Estado</label>
+                            <select id="transferHistoryStatusFilter" class="form-select form-select-sm">
+                                <option value="">Todos</option>
+                                <option value="pending">Pendiente</option>
+                                <option value="accepted">Aceptada</option>
+                                <option value="rejected">Rechazada</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2 d-grid">
+                            <button type="button" id="transferHistoryFilterReset" class="btn btn-outline-secondary btn-sm">Limpiar</button>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Fecha solicitud</th>
+                                    <th>Activo</th>
+                                    <th>Origen → Destino</th>
+                                    <th>Estado</th>
+                                    <th>Prioridad</th>
+                                    <th>Decisión</th>
+                                    <th>Motivo</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="transferHistoryTableBody">
+                            @forelse ($transferRequestHistory as $transferRequest)
+                                @php
+                                    $assetLabel = trim((string) (($transferRequest->computerAsset?->asset_tag ?? '') . ' ' . ($transferRequest->computerAsset?->hostname ?? '')));
+                                    $statusKey = (string) $transferRequest->status;
+                                    $priorityKey = Str::lower((string) ($transferRequest->priority ?: 'normal'));
+                                    $statusBadgeClass = match ($statusKey) {
+                                        'pending' => 'warning text-dark',
+                                        'accepted' => 'success',
+                                        'rejected' => 'danger',
+                                        default => 'secondary',
+                                    };
+                                    $priorityBadgeClass = match ($priorityKey) {
+                                        'urgent' => 'danger',
+                                        'high' => 'warning text-dark',
+                                        default => 'secondary',
+                                    };
+                                    $priorityLabel = match ($priorityKey) {
+                                        'urgent' => 'URGENTE',
+                                        'high' => 'ALTA',
+                                        default => 'NORMAL',
+                                    };
+                                    $searchText = Str::lower(collect([
+                                        $assetLabel,
+                                        $transferRequest->requested_by_name,
+                                        $transferRequest->requested_to_user_name,
+                                        optional($transferRequest->requestedFromBranch)->name,
+                                        optional($transferRequest->requestedToBranch)->name,
+                                        $transferRequest->reason,
+                                        $transferRequest->note,
+                                        $transferRequest->decision_note,
+                                        $statusKey,
+                                        $priorityKey,
+                                    ])->filter()->join(' '));
+                                @endphp
+                                <tr data-transfer-row="1" data-transfer-status="{{ Str::lower($statusKey) }}" data-transfer-search="{{ $searchText }}">
+                                    <td class="small">{{ optional($transferRequest->requested_at)->format('d/m/Y H:i') ?: 'N/A' }}</td>
+                                    <td>
+                                        <div class="fw-semibold">{{ $assetLabel !== '' ? $assetLabel : ('Activo #' . $transferRequest->computer_asset_id) }}</div>
+                                        <div class="small text-muted">Solicitud #{{ $transferRequest->id }}</div>
+                                    </td>
+                                    <td class="small">
+                                        <div>{{ $transferRequest->requested_by_name ?: 'Sistema' }} → {{ $transferRequest->requested_to_user_name ?: 'N/A' }}</div>
+                                        <div class="text-muted">{{ optional($transferRequest->requestedFromBranch)->name ?: 'N/A' }} → {{ optional($transferRequest->requestedToBranch)->name ?: 'N/A' }}</div>
+                                    </td>
+                                    <td><span class="badge text-bg-{{ $statusBadgeClass }}">{{ strtoupper($statusKey) }}</span></td>
+                                    <td><span class="badge text-bg-{{ $priorityBadgeClass }}">{{ $priorityLabel }}</span></td>
+                                    <td class="small">
+                                        @if ($transferRequest->decided_at)
+                                            <div>{{ optional($transferRequest->decided_at)->format('d/m/Y H:i') }}</div>
+                                            <div class="text-muted">por {{ $transferRequest->decided_by_name ?: 'Sistema' }}</div>
+                                        @else
+                                            <span class="text-muted">Pendiente</span>
+                                        @endif
+                                    </td>
+                                    <td class="small">
+                                        <div>{{ $transferRequest->reason }}</div>
+                                        @if ($transferRequest->decision_note)
+                                            <div class="text-muted">Nota: {{ $transferRequest->decision_note }}</div>
+                                        @endif
+                                    </td>
+                                    <td>
+                                        @if ($transferRequest->computerAsset)
+                                            <a href="{{ url('/admin/computer-assets/' . $transferRequest->computerAsset->id . '/assignment-log') }}" class="btn btn-sm btn-outline-secondary" target="_blank" rel="noopener">
+                                                Bitácora
+                                            </a>
+                                        @endif
+                                    </td>
+                                </tr>
+                            @empty
+                                <tr><td colspan="8" class="text-center text-muted py-3">Sin solicitudes registradas.</td></tr>
+                            @endforelse
+                            <tr id="transferHistoryNoResults" class="d-none">
+                                <td colspan="8" class="text-center text-muted py-3">No hay resultados para este filtro.</td>
+                            </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            @endif
+
             @php
                 $assetFilterTypes = $computerAssets->pluck('equipment_type')->filter()->unique()->sort()->values();
                 $assetFilterStatuses = $computerAssets->pluck('status')->filter()->unique()->sort()->values();
@@ -819,8 +1059,8 @@
                 $assetFilterModels = $computerAssets->pluck('model')->filter()->unique()->sort()->values();
             @endphp
 
-            <div class="card">
-                <div class="m-2 p-3 border rounded bg-light">
+            <div class="inventory-filter-panel mb-3">
+                <div class="p-3">
                     <div class="small fw-semibold text-muted mb-2">Filtros de búsqueda</div>
                     <div class="row g-2 align-items-end">
                         <div class="col-md-4">
@@ -932,6 +1172,9 @@
                     </div>
                     <div id="inventoryAssetActiveFilters" class="d-flex flex-wrap gap-2 mt-2"></div>
                 </div>
+            </div>
+
+            <div class="card inventory-results-card">
                 <div class="table-responsive">
                     <table class="table table-hover mb-0" id="inventoryAssetsTable">
                         <thead class="table-light">
@@ -1051,6 +1294,7 @@
                                     data-storage="{{ $asset->storage_gb ?? '' }}"
                                     data-last-seen="{{ $asset->last_seen_at?->toIso8601String() ?? '' }}"
                                     data-asset-branch-id="{{ $asset->branch_id ?? '' }}"
+                                    data-asset-branch-name="{{ optional($asset->branch)->name ?? '' }}"
                                     data-asset-node-id="{{ $asset->node_id ?? '' }}"
                                     data-asset-equipment-type="{{ $asset->equipment_type ?? '' }}"
                                     data-asset-hostname="{{ $asset->hostname ?? '' }}"
@@ -1142,6 +1386,9 @@
                                             <i class="bi bi-journal-text"></i> Bitácora
                                         </a>
                                         @if ($canInventoryManage)
+                                        <button type="button" class="btn btn-sm btn-outline-info js-request-transfer-asset" data-bs-toggle="modal" data-bs-target="#modalAssetTransferRequest">
+                                            <i class="bi bi-send"></i> Solicitar traslado
+                                        </button>
                                         <button type="button" class="btn btn-sm btn-outline-warning js-reassign-asset" data-bs-toggle="modal" data-bs-target="#modalAssetReassign">
                                             <i class="bi bi-arrow-left-right"></i> Reasignar
                                         </button>
@@ -1376,11 +1623,11 @@
                 <div class="modal-body">
                     <div class="mb-3">
                         <label class="form-label">Nombre de la sede</label>
-                        <input type="text" name="name" class="form-control" required placeholder="Ej: Oficina Central">
+                        <input type="text" name="branch_name" class="form-control" required placeholder="Ej: Oficina Central">
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Dirección</label>
-                        <input type="text" name="address" class="form-control" placeholder="Dirección completa">
+                        <input type="text" name="branch_address" class="form-control" placeholder="Dirección completa">
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -1859,6 +2106,66 @@
 </div>
 @endif
 
+{{-- MODAL: Asset Transfer Request --}}
+@if ($canInventoryManage)
+<div class="modal fade" id="modalAssetTransferRequest" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url('/admin/computer-assets/0/transfer-requests') }}" id="modalAssetTransferRequestForm">
+                @csrf
+                <div class="modal-header">
+                    <h5 class="modal-title">Solicitar traslado de activo</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-light border small mb-3" id="modalAssetTransferRequestSummary">Selecciona un activo para solicitar traslado.</div>
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <label class="form-label">Sede destino</label>
+                            <select name="transfer_to_branch_id" class="form-select" required>
+                                <option value="">Selecciona...</option>
+                                @foreach ($branches as $branch)
+                                    <option value="{{ $branch->id }}">{{ $branch->name }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Agente destino</label>
+                            <select name="transfer_to_user_id" class="form-select" required>
+                                <option value="">Selecciona...</option>
+                                @foreach ($transferAgents as $agent)
+                                    <option value="{{ $agent->id }}">{{ $agent->name }}{{ $agent->email ? ' · ' . $agent->email : '' }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Prioridad</label>
+                            <select name="transfer_priority" class="form-select" required>
+                                <option value="normal" selected>Normal</option>
+                                <option value="high">Alta</option>
+                                <option value="urgent">Urgente</option>
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Motivo del traslado</label>
+                            <textarea name="transfer_reason" rows="2" class="form-control" maxlength="1000" required placeholder="Ej. Renovación de equipo para mesa de soporte en sede Sur"></textarea>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Notas adicionales (opcional)</label>
+                            <textarea name="transfer_note" rows="2" class="form-control" maxlength="1000" placeholder="Información de entrega, empaquetado o prioridad"></textarea>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-info">Enviar solicitud</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+@endif
+
 {{-- MODAL: Software --}}
 @if ($canTopologyManage)
 <div class="modal fade" id="modalSoftware" tabindex="-1">
@@ -2176,6 +2483,18 @@ document.addEventListener('DOMContentLoaded', function () {
 
     .mini-table { font-size: 0.8rem; }
     .mini-table th, .mini-table td { padding: 0.25rem 0.5rem; }
+
+    .inventory-filter-panel {
+        border: 1px solid #dbe4f0;
+        border-radius: 12px;
+        background: linear-gradient(180deg, #f8fbff 0%, #eef4fb 100%);
+        box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
+    }
+
+    .inventory-results-card {
+        border: 1px solid #dbe4f0;
+        box-shadow: 0 2px 10px rgba(15, 23, 42, 0.03);
+    }
 </style>
 
 @endsection
@@ -2685,6 +3004,13 @@ document.addEventListener('DOMContentLoaded', function () {
     const modalAssetReassignForm = document.getElementById('modalAssetReassignForm');
     const modalAssetReassignSummary = document.getElementById('modalAssetReassignSummary');
     const modalReassignCurrentUser = document.getElementById('modalReassignCurrentUser');
+    const modalAssetTransferRequestForm = document.getElementById('modalAssetTransferRequestForm');
+    const modalAssetTransferRequestSummary = document.getElementById('modalAssetTransferRequestSummary');
+    const transferHistorySearchInput = document.getElementById('transferHistorySearchInput');
+    const transferHistoryStatusFilter = document.getElementById('transferHistoryStatusFilter');
+    const transferHistoryFilterReset = document.getElementById('transferHistoryFilterReset');
+    const transferHistoryNoResults = document.getElementById('transferHistoryNoResults');
+    const transferHistoryRows = Array.from(document.querySelectorAll('#transferHistoryTableBody tr[data-transfer-row="1"]'));
 
     const normalizeFilterValue = (value) => String(value ?? '')
         .toLowerCase()
@@ -2908,6 +3234,24 @@ document.addEventListener('DOMContentLoaded', function () {
 
         if (modalReassignCurrentUser) {
             modalReassignCurrentUser.value = currentUser;
+        }
+    };
+
+    const openAssetModalForTransferRequest = (row) => {
+        if (!row || !modalAssetTransferRequestForm) return;
+        const assetId = row.dataset.assetId;
+        if (!assetId) return;
+
+        modalAssetTransferRequestForm.action = `{{ url('/admin/computer-assets') }}/${assetId}/transfer-requests`;
+        modalAssetTransferRequestForm.reset();
+
+        const assetNameParts = [row.dataset.assetTag, row.dataset.assetHostname].filter(Boolean);
+        const assetName = assetNameParts.length ? assetNameParts.join(' · ') : `Activo #${assetId}`;
+        const currentUser = row.dataset.assetAssignedUser || 'Sin asignar';
+        const currentBranch = row.dataset.assetBranchName || 'N/A';
+
+        if (modalAssetTransferRequestSummary) {
+            modalAssetTransferRequestSummary.innerHTML = `<strong>${escapeHtml(assetName)}</strong><br><span class="text-muted">Responsable actual: ${escapeHtml(currentUser)} · Sede actual: ${escapeHtml(currentBranch)}</span>`;
         }
     };
 
@@ -3136,6 +3480,31 @@ document.addEventListener('DOMContentLoaded', function () {
         renderInventoryFilterChips();
     };
 
+    const applyTransferHistoryFilters = () => {
+        if (!transferHistoryRows.length) {
+            if (transferHistoryNoResults) transferHistoryNoResults.classList.add('d-none');
+            return;
+        }
+
+        const query = normalizeFilterValue(transferHistorySearchInput?.value || '');
+        const status = normalizeFilterValue(transferHistoryStatusFilter?.value || '');
+
+        let visible = 0;
+        transferHistoryRows.forEach((row) => {
+            const rowStatus = normalizeFilterValue(row.dataset.transferStatus || '');
+            const rowSearch = normalizeFilterValue(row.dataset.transferSearch || '');
+            const matches = (!query || rowSearch.includes(query))
+                && (!status || rowStatus === status);
+
+            row.classList.toggle('d-none', !matches);
+            if (matches) visible += 1;
+        });
+
+        if (transferHistoryNoResults) {
+            transferHistoryNoResults.classList.toggle('d-none', visible !== 0);
+        }
+    };
+
     if (inventoryActiveFilters) {
         inventoryActiveFilters.addEventListener('click', (event) => {
             const chipButton = event.target.closest('button[data-filter-key]');
@@ -3243,6 +3612,20 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
+    [transferHistorySearchInput, transferHistoryStatusFilter].forEach((control) => {
+        if (!control) return;
+        control.addEventListener('input', applyTransferHistoryFilters);
+        control.addEventListener('change', applyTransferHistoryFilters);
+    });
+
+    if (transferHistoryFilterReset) {
+        transferHistoryFilterReset.addEventListener('click', () => {
+            if (transferHistorySearchInput) transferHistorySearchInput.value = '';
+            if (transferHistoryStatusFilter) transferHistoryStatusFilter.value = '';
+            applyTransferHistoryFilters();
+        });
+    }
+
     btnOpenNewAssetModal?.addEventListener('click', () => {
         resetAssetModalToCreate();
     });
@@ -3258,6 +3641,13 @@ document.addEventListener('DOMContentLoaded', function () {
         button.addEventListener('click', (event) => {
             const row = event.currentTarget.closest('tr[data-asset-id]');
             openAssetModalForReassign(row);
+        });
+    });
+
+    document.querySelectorAll('.js-request-transfer-asset').forEach((button) => {
+        button.addEventListener('click', (event) => {
+            const row = event.currentTarget.closest('tr[data-asset-id]');
+            openAssetModalForTransferRequest(row);
         });
     });
 
@@ -3317,6 +3707,7 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     applyInventoryFilters();
+    applyTransferHistoryFilters();
     activateTabFromHash();
     focusAssetFromUrl();
 })();

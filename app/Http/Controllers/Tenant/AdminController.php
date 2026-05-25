@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Tenant;
 use App\Http\Controllers\Controller;
 use App\Models\Branch;
 use App\Models\ComputerAsset;
+use App\Models\ComputerAssetTransferRequest;
 use App\Models\ComputerAssetMetric;
 use App\Models\EquipmentBrand;
 use App\Models\EquipmentModel;
@@ -125,6 +126,41 @@ class AdminController extends Controller
             ->when($branchScopeIds !== null, fn (Builder $query) => $query->whereIn('branch_id', $branchScopeIds))
             ->latest()
             ->get();
+        $currentUser = $request->user();
+        $currentUserId = (int) ($currentUser->id ?? 0);
+        $transferAgents = User::query()
+            ->select(['id', 'name', 'email', 'branch_id'])
+            ->where('is_active', true)
+            ->orderBy('name')
+            ->get();
+        $transferRequestHistory = ComputerAssetTransferRequest::query()
+            ->with([
+                'computerAsset:id,asset_tag,hostname,branch_id,assigned_user',
+                'requestedFromBranch:id,name',
+                'requestedToBranch:id,name',
+            ])
+            ->when(
+                $branchScopeIds !== null,
+                fn (Builder $query) => $query->where(function (Builder $scoped) use ($branchScopeIds) {
+                    $scoped
+                        ->whereIn('requested_from_branch_id', $branchScopeIds)
+                        ->orWhereIn('requested_to_branch_id', $branchScopeIds);
+                })
+            )
+            ->latest('requested_at')
+            ->limit(200)
+            ->get();
+
+        $pendingTransferRequests = $transferRequestHistory
+            ->where('status', 'pending')
+            ->values();
+
+        $incomingTransferRequests = $pendingTransferRequests
+            ->filter(fn (ComputerAssetTransferRequest $transfer) => (int) $transfer->requested_to_user_id === $currentUserId)
+            ->values();
+        $outgoingTransferRequests = $pendingTransferRequests
+            ->filter(fn (ComputerAssetTransferRequest $transfer) => (int) $transfer->requested_by_user_id === $currentUserId)
+            ->values();
         $equipmentBrands = EquipmentBrand::query()->orderBy('name')->get();
         $equipmentModels = EquipmentModel::query()->with('brand:id,name')->orderBy('name')->get();
         $apModels = $equipmentModels->filter(fn ($m) => $m->equipment_type === 'access-point')->values();
@@ -211,6 +247,10 @@ class AdminController extends Controller
             'floorPlans' => $floorPlans,
             'accessPointNodes' => $accessPointNodes,
             'computerAssets' => $computerAssets,
+            'transferAgents' => $transferAgents,
+            'incomingTransferRequests' => $incomingTransferRequests,
+            'outgoingTransferRequests' => $outgoingTransferRequests,
+            'transferRequestHistory' => $transferRequestHistory,
             'monitoringAssets' => $monitoringAssets,
             'monitoringSummary' => [
                 'tracked_assets' => ComputerAsset::query()
@@ -2443,6 +2483,137 @@ SVG;
             ->with('status', 'Activo TI reasignado correctamente.');
     }
 
+    public function requestComputerAssetTransfer(Request $request, ComputerAsset $computerAsset): RedirectResponse
+    {
+        $this->ensureComputerAssetAccessScope($request, $computerAsset);
+
+        $validated = $request->validate([
+            'transfer_to_branch_id' => ['required', 'exists:branches,id'],
+            'transfer_to_user_id' => ['required', 'exists:users,id'],
+            'transfer_priority' => ['required', Rule::in(['normal', 'high', 'urgent'])],
+            'transfer_reason' => ['required', 'string', 'max:1000'],
+            'transfer_note' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $targetUser = User::query()->findOrFail((int) $validated['transfer_to_user_id']);
+
+        ComputerAssetTransferRequest::query()->create([
+            'computer_asset_id' => $computerAsset->id,
+            'status' => 'pending',
+            'priority' => (string) $validated['transfer_priority'],
+            'requested_by_user_id' => $request->user()?->id,
+            'requested_by_name' => trim((string) ($request->user()?->name ?? 'Sistema')),
+            'requested_from_branch_id' => $computerAsset->branch_id,
+            'requested_to_branch_id' => (int) $validated['transfer_to_branch_id'],
+            'requested_to_user_id' => $targetUser->id,
+            'requested_to_user_name' => trim((string) ($targetUser->name ?? '')),
+            'reason' => trim((string) $validated['transfer_reason']),
+            'note' => trim((string) ($validated['transfer_note'] ?? '')) !== '' ? trim((string) $validated['transfer_note']) : null,
+            'requested_at' => now(),
+        ]);
+
+        return redirect()
+            ->to('/admin?focus_asset=' . $computerAsset->id . '#section-assets')
+            ->with('status', 'Solicitud de traslado creada y enviada al agente destino.');
+    }
+
+    public function decideComputerAssetTransferRequest(Request $request, ComputerAssetTransferRequest $transferRequest): RedirectResponse
+    {
+        $validated = $request->validate([
+            'decision' => ['required', Rule::in(['accepted', 'rejected'])],
+            'decision_note' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        if ($transferRequest->status !== 'pending') {
+            return redirect()
+                ->to('/admin#section-assets')
+                ->with('status', 'La solicitud ya fue atendida previamente.');
+        }
+
+        $currentUser = $request->user();
+        $currentUserId = (int) ($currentUser?->id ?? 0);
+        $isAuthorizedReceiver = $currentUserId > 0
+            && ((int) $transferRequest->requested_to_user_id === $currentUserId || (method_exists($currentUser, 'isAdmin') && $currentUser->isAdmin()));
+
+        if (!$isAuthorizedReceiver) {
+            abort(403, 'Solo el agente destino puede atender esta solicitud de traslado.');
+        }
+
+        $decision = (string) $validated['decision'];
+        $decisionNote = trim((string) ($validated['decision_note'] ?? ''));
+
+        $transferRequest->update([
+            'status' => $decision,
+            'decided_by_user_id' => $currentUserId > 0 ? $currentUserId : null,
+            'decided_by_name' => trim((string) ($currentUser?->name ?? 'Sistema')),
+            'decided_at' => now(),
+            'decision_note' => $decisionNote !== '' ? $decisionNote : null,
+        ]);
+
+        if ($decision !== 'accepted') {
+            return redirect()
+                ->to('/admin#section-assets')
+                ->with('status', 'Solicitud de traslado rechazada.');
+        }
+
+        $computerAsset = ComputerAsset::query()->findOrFail((int) $transferRequest->computer_asset_id);
+        $details = is_array($computerAsset->details) ? $computerAsset->details : [];
+
+        $fromBranchName = (string) optional($transferRequest->requestedFromBranch)->name;
+        $toBranchName = (string) optional($transferRequest->requestedToBranch)->name;
+        $fromAgentName = trim((string) $transferRequest->requested_by_name);
+        $toAgentName = trim((string) $transferRequest->requested_to_user_name);
+
+        $interactionChunks = [
+            'Traspaso aceptado por agente destino.',
+            'Solicitud #' . $transferRequest->id,
+            'Prioridad: ' . strtoupper((string) ($transferRequest->priority ?: 'normal')),
+            $fromAgentName !== '' ? ('Agente origen: ' . $fromAgentName) : null,
+            $toAgentName !== '' ? ('Agente destino: ' . $toAgentName) : null,
+            $fromBranchName !== '' ? ('Sede origen: ' . $fromBranchName) : null,
+            $toBranchName !== '' ? ('Sede destino: ' . $toBranchName) : null,
+            $decisionNote !== '' ? ('Nota de aceptación: ' . $decisionNote) : null,
+        ];
+
+        $metadataPayload = [
+            'asset_status' => $computerAsset->status,
+            'asset_assigned_user' => $toAgentName !== '' ? $toAgentName : ($computerAsset->assigned_user ?? ''),
+            'asset_responsiva_reference' => (string) data_get($details, 'responsiva.reference', ''),
+            'asset_assignment_invoice_folio' => null,
+            'asset_assignment_supplier' => null,
+            'asset_assignment_delivery_date' => now()->toDateString(),
+            'asset_assignment_received_by' => $toAgentName !== '' ? $toAgentName : null,
+            'asset_assignment_received_signature_data_url' => null,
+            'asset_assignment_change_reason' => trim((string) $transferRequest->reason),
+            'asset_interaction_note' => collect($interactionChunks)->filter()->join(' | '),
+            'asset_branch_id' => (int) $transferRequest->requested_to_branch_id,
+            'asset_equipment_type' => $computerAsset->equipment_type,
+            'asset_brand' => $computerAsset->brand,
+            'asset_model' => $computerAsset->model,
+            'asset_hostname' => $computerAsset->hostname,
+            'asset_tag' => $computerAsset->asset_tag,
+            'asset_serial_number' => $computerAsset->serial_number,
+            'asset_transfer_request_id' => (int) $transferRequest->id,
+            'asset_transfer_from_branch' => $fromBranchName !== '' ? $fromBranchName : null,
+            'asset_transfer_to_branch' => $toBranchName !== '' ? $toBranchName : null,
+            'asset_transfer_from_user' => $fromAgentName !== '' ? $fromAgentName : null,
+            'asset_transfer_to_user' => $toAgentName !== '' ? $toAgentName : null,
+            'asset_transfer_priority' => (string) ($transferRequest->priority ?: 'normal'),
+        ];
+
+        $nextDetails = $this->applyAssetOperationalMetadata($details, $metadataPayload, $computerAsset);
+
+        $computerAsset->update([
+            'branch_id' => (int) $transferRequest->requested_to_branch_id,
+            'assigned_user' => $toAgentName !== '' ? $toAgentName : $computerAsset->assigned_user,
+            'details' => $nextDetails,
+        ]);
+
+        return redirect()
+            ->to('/admin?focus_asset=' . $computerAsset->id . '#section-assets')
+            ->with('status', 'Solicitud de traslado aceptada y movimiento aplicado al activo.');
+    }
+
     public function destroyComputerAsset(ComputerAsset $computerAsset): RedirectResponse
     {
         $computerAsset->delete();
@@ -2604,6 +2775,12 @@ SVG;
                     'assigned_at_label' => $assignedAt ? Carbon::parse((string) $assignedAt)->format('d/m/Y') : null,
                     'received_by' => data_get($entry, 'received_by'),
                     'assigned_user' => data_get($entry, 'assigned_user'),
+                    'transfer_request_id' => data_get($entry, 'transfer_request_id'),
+                    'transfer_from_branch' => data_get($entry, 'transfer_from_branch'),
+                    'transfer_to_branch' => data_get($entry, 'transfer_to_branch'),
+                    'transfer_from_user' => data_get($entry, 'transfer_from_user'),
+                    'transfer_to_user' => data_get($entry, 'transfer_to_user'),
+                    'transfer_priority' => data_get($entry, 'transfer_priority'),
                     'change_reason' => $changeReason !== '' ? $changeReason : null,
                     'interaction_note' => $interactionNote !== '' ? $interactionNote : null,
                 ];
@@ -2945,6 +3122,12 @@ SVG;
         $assignmentReceivedBy = trim((string) ($validated['asset_assignment_received_by'] ?? ''));
         $assignmentReceivedSignatureDataUrl = trim((string) ($validated['asset_assignment_received_signature_data_url'] ?? ''));
         $assignmentChangeReason = trim((string) ($validated['asset_assignment_change_reason'] ?? ''));
+        $transferRequestId = isset($validated['asset_transfer_request_id']) ? (int) $validated['asset_transfer_request_id'] : null;
+        $transferFromBranch = trim((string) ($validated['asset_transfer_from_branch'] ?? ''));
+        $transferToBranch = trim((string) ($validated['asset_transfer_to_branch'] ?? ''));
+        $transferFromUser = trim((string) ($validated['asset_transfer_from_user'] ?? ''));
+        $transferToUser = trim((string) ($validated['asset_transfer_to_user'] ?? ''));
+        $transferPriority = trim((string) ($validated['asset_transfer_priority'] ?? ''));
         $assignmentDeliveryDateRaw = trim((string) ($validated['asset_assignment_delivery_date'] ?? ''));
         $assignmentDeliveryDate = $assignmentDeliveryDateRaw !== ''
             ? Carbon::parse($assignmentDeliveryDateRaw)->toDateString()
@@ -3054,6 +3237,12 @@ SVG;
                 'received_signature_hash' => $assignmentReceivedSignatureHash,
                 'received_signature_signed_at' => $assignmentReceivedSignatureSignedAt,
                 'assigned_user' => $newAssigned !== '' ? $newAssigned : null,
+                'transfer_request_id' => $transferRequestId,
+                'transfer_from_branch' => $transferFromBranch !== '' ? $transferFromBranch : null,
+                'transfer_to_branch' => $transferToBranch !== '' ? $transferToBranch : null,
+                'transfer_from_user' => $transferFromUser !== '' ? $transferFromUser : null,
+                'transfer_to_user' => $transferToUser !== '' ? $transferToUser : null,
+                'transfer_priority' => $transferPriority !== '' ? $transferPriority : null,
                 'change_reason' => $assignmentChangeReason !== '' ? $assignmentChangeReason : null,
                 'interaction_note' => $interactionNote !== '' ? $interactionNote : null,
             ];
