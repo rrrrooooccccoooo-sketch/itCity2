@@ -46,9 +46,9 @@ class LoginController extends Controller
     protected function authenticated(Request $request, $user)
     {
         if (app()->bound('tenant') && tenancy()->initialized) {
-            return redirect('/admin');
+            return redirect()->intended('/admin');
         }
 
-        return redirect($this->redirectTo);
+        return redirect()->intended($this->redirectTo);
     }
 }

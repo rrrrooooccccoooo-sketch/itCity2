@@ -139,25 +139,30 @@ class User extends Authenticatable
 
     public function effectiveBranchScopeIds(): ?array
     {
+        $scopeIds = $this->relationLoaded('branchScopes')
+            ? $this->branchScopes->pluck('id')->all()
+            : $this->branchScopes()->pluck('branches.id')->all();
+
+        if ($this->isAdmin()) {
+            $adminScopeIds = array_values(array_unique(array_filter(
+                array_map('intval', $scopeIds),
+                fn ($value) => $value > 0
+            )));
+
+            return empty($adminScopeIds) ? null : $adminScopeIds;
+        }
+
         $ids = [];
 
         if ($this->branch_id !== null) {
             $ids[] = (int) $this->branch_id;
         }
 
-        $scopeIds = $this->relationLoaded('branchScopes')
-            ? $this->branchScopes->pluck('id')->all()
-            : $this->branchScopes()->pluck('branches.id')->all();
-
         foreach ($scopeIds as $scopeId) {
             $ids[] = (int) $scopeId;
         }
 
         $ids = array_values(array_unique(array_filter($ids, fn ($value) => $value > 0)));
-
-        if ($this->isAdmin() && empty($ids)) {
-            return null;
-        }
 
         return $ids;
     }

@@ -35,8 +35,10 @@ class PortalController extends Controller
         return view('tenant.city', compact('branches', 'tenantName', 'tenantLogo'));
     }
 
-    public function branch(Branch $branch): View
+    public function branch(Request $request, Branch $branch): View
     {
+        $this->rememberCurrentBranchContext($request, (int) $branch->id);
+
         $nodeTypes = NodeType::query()
             ->withCount(['nodes' => function ($query) use ($branch) {
                 $query->where('branch_id', $branch->id);
@@ -813,8 +815,10 @@ class PortalController extends Controller
         ]);
     }
 
-    public function network(Branch $branch): View
+    public function network(Request $request, Branch $branch): View
     {
+        $this->rememberCurrentBranchContext($request, (int) $branch->id);
+
         $nodes = Node::query()
             ->where('branch_id', $branch->id)
             ->with('nodeType:id,name')
@@ -897,8 +901,10 @@ class PortalController extends Controller
         ]);
     }
 
-    public function node(Node $node): View
+    public function node(Request $request, Node $node): View
     {
+        $this->rememberCurrentBranchContext($request, (int) $node->branch_id);
+
         $node->load([
             'branch:id,name,address,city,state,country',
             'nodeType:id,name,slug',
@@ -938,6 +944,15 @@ class PortalController extends Controller
             'probeSuccessRate' => $successRate,
             'probeAvgLatency' => $avgLatency !== null ? round((float) $avgLatency, 2) : null,
         ]);
+    }
+
+    private function rememberCurrentBranchContext(Request $request, int $branchId): void
+    {
+        if ($branchId <= 0 || !$request->hasSession()) {
+            return;
+        }
+
+        $request->session()->put('tenant_portal_context_branch_id', $branchId);
     }
 
     public function branchNodeStatus(Branch $branch): JsonResponse

@@ -4,7 +4,7 @@
 @section('page_title', $node->name)
 
 @section('topbar_actions')
-    <a href="{{ url('/admin?edit_node=' . $node->id) }}" class="btn btn-sm btn-dark">Editar nodo</a>
+    <a href="{{ url('/admin?edit_node=' . $node->id . '&branch_id=' . $node->branch_id) }}" class="btn btn-sm btn-dark">Editar nodo</a>
     <a href="{{ url('/sede/' . $node->branch_id) }}" class="btn btn-sm btn-outline-secondary">Volver a sede</a>
 @endsection
 

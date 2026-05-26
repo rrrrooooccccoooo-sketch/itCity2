@@ -4,7 +4,12 @@
 @section('page_title', 'Gestión de Usuarios')
 
 @section('topbar_actions')
-    <a href="{{ url('/admin') }}" class="btn btn-sm btn-outline-secondary">← Panel Admin</a>
+    @php
+        $adminContextBranchId = max(0, (int) request()->integer('branch_id', (int) ($currentContextBranchId ?? 0)));
+        $adminPanelUrl = $adminContextBranchId > 0 ? url('/admin?branch_id=' . $adminContextBranchId) : url('/admin');
+        $adImportUrl = $adminContextBranchId > 0 ? url('/admin/users/ad-import?branch_id=' . $adminContextBranchId) : url('/admin/users/ad-import');
+    @endphp
+    <a href="{{ $adminPanelUrl }}" class="btn btn-sm btn-outline-secondary">← Panel Admin</a>
 @endsection
 
 @push('styles')
@@ -62,7 +67,7 @@
         </div>
         @if ($canUsersManage)
             <div class="d-flex gap-2">
-                <a href="{{ url('/admin/users/ad-import') }}" class="btn btn-outline-primary btn-sm">
+                <a href="{{ $adImportUrl }}" class="btn btn-outline-primary btn-sm">
                     <i class="bi bi-diagram-3 me-1"></i> Importar desde AD
                 </a>
                 <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalCreateUser">

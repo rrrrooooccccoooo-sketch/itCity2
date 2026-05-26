@@ -21,6 +21,10 @@ class RedirectIfAuthenticated
 
         foreach ($guards as $guard) {
             if (Auth::guard($guard)->check()) {
+                if (app()->bound('tenant') && tenancy()->initialized) {
+                    return redirect('/admin');
+                }
+
                 return redirect(RouteServiceProvider::HOME);
             }
         }

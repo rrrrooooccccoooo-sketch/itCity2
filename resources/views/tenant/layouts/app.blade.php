@@ -529,8 +529,31 @@
     @endif
     @endisset
 
+    @php
+        $requestedAdminBranchId = max(0, (int) request()->integer('branch_id', 0));
+        $portalContextBranchId = max(0, (int) session('tenant_portal_context_branch_id', 0));
+        $sessionAdminBranchId = max(0, (int) session('tenant_admin_context_branch_id', 0));
+        $adminBranchContextId = null;
+        if ($requestedAdminBranchId > 0) {
+            $adminBranchContextId = $requestedAdminBranchId;
+        } elseif (isset($currentContextBranchId) && (int) $currentContextBranchId > 0) {
+            $adminBranchContextId = (int) $currentContextBranchId;
+        } elseif (isset($branch)) {
+            $adminBranchContextId = $branch->id;
+        } elseif (isset($node)) {
+            $adminBranchContextId = $node->branch_id ?? null;
+        } elseif ($sessionAdminBranchId > 0) {
+            $adminBranchContextId = $sessionAdminBranchId;
+        } elseif ($portalContextBranchId > 0) {
+            $adminBranchContextId = $portalContextBranchId;
+        }
+
+        $adminPanelUrl = $adminBranchContextId ? url('/admin?branch_id=' . $adminBranchContextId) : url('/admin');
+        $adminUsersUrl = $adminBranchContextId ? url('/admin/users?branch_id=' . $adminBranchContextId) : url('/admin/users');
+    @endphp
+
     <div class="sb-group-title">Administración</div>
-    <a href="{{ url('/admin') }}" class="sb-link {{ $navAdmin }}">
+    <a href="{{ $adminPanelUrl }}" class="sb-link {{ $navAdmin }}">
         <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" fill="currentColor" viewBox="0 0 16 16">
             <path d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311c.446.82.023 1.841-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872l-.1-.34zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/>
         </svg>
@@ -538,7 +561,7 @@
     </a>
     @auth
     @if (auth()->user()->isAdmin())
-    <a href="{{ url('/admin/users') }}" class="sb-link {{ str_starts_with($path, 'admin/users') ? 'active' : '' }}">
+    <a href="{{ $adminUsersUrl }}" class="sb-link {{ str_starts_with($path, 'admin/users') ? 'active' : '' }}">
         <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" fill="currentColor" viewBox="0 0 16 16">
             <path d="M15 14s1 0 1-1-1-4-5-4-5 3-5 4 1 1 1 1h8zm-7.978-1A.261.261 0 0 1 7 12.996c.001-.264.167-1.03.76-1.72C8.312 10.629 9.282 10 11 10c1.717 0 2.687.63 3.24 1.276.593.69.758 1.457.76 1.72l-.008.002a.274.274 0 0 1-.014.002H7.022zM11 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm3-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM6.936 9.28a5.88 5.88 0 0 0-1.23-.247A7.35 7.35 0 0 0 5 9c-4 0-5 3-5 4 0 .667.333 1 1 1h4.216A2.238 2.238 0 0 1 5 13c0-1.01.377-2.042 1.09-2.904.243-.294.526-.569.846-.816zM4.92 10A5.493 5.493 0 0 0 4 13H1c0-.26.164-1.03.76-1.724.545-.636 1.492-1.256 3.16-1.275zM1.5 5.5a3 3 0 1 1 6 0 3 3 0 0 1-6 0zm3-2a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>
         </svg>
@@ -571,6 +594,35 @@
 
 <script>
     (function () {
+        const ADMIN_CONTEXT_STORAGE_KEY = 'tenant_admin_context_branch_id';
+        const readPositiveInt = (value) => {
+            const normalized = String(value ?? '').trim();
+            if (!/^\d+$/.test(normalized)) return null;
+            const parsed = Number.parseInt(normalized, 10);
+            return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+        };
+
+        const currentUrlForContext = new URL(window.location.href);
+        const queryContextBranchId = readPositiveInt(currentUrlForContext.searchParams.get('branch_id'));
+        const pathMatch = currentUrlForContext.pathname.match(/^\/sede\/(\d+)$/);
+        const pathContextBranchId = readPositiveInt(pathMatch ? pathMatch[1] : null);
+        const linkContextBranchId = (() => {
+            const seededLink = document.querySelector('a[href*="/admin?branch_id="]');
+            if (!seededLink) return null;
+
+            try {
+                const seededUrl = new URL(seededLink.href, window.location.origin);
+                return readPositiveInt(seededUrl.searchParams.get('branch_id'));
+            } catch (error) {
+                return null;
+            }
+        })();
+
+        const resolvedContextBranchId = queryContextBranchId ?? pathContextBranchId ?? linkContextBranchId;
+        if (resolvedContextBranchId !== null) {
+            sessionStorage.setItem(ADMIN_CONTEXT_STORAGE_KEY, String(resolvedContextBranchId));
+        }
+
         const currentUrl = new URL(window.location.href);
         const isDirectFloorPlanRoute = currentUrl.pathname.includes('/admin/floor-plans/');
         if (currentUrl.searchParams.has('floor_plan') || isDirectFloorPlanRoute) {

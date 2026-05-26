@@ -144,8 +144,32 @@
         .buildings-grid {
             perspective: 1200px;
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            grid-template-columns: repeat(1, minmax(0, 1fr));
             gap: 32px 28px;
+        }
+
+        @media (min-width: 640px) {
+            .buildings-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (min-width: 900px) {
+            .buildings-grid {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+        }
+
+        @media (min-width: 1140px) {
+            .buildings-grid {
+                grid-template-columns: repeat(4, minmax(0, 1fr));
+            }
+        }
+
+        @media (min-width: 1360px) {
+            .buildings-grid {
+                grid-template-columns: repeat(5, minmax(0, 1fr));
+            }
         }
 
         .building-wrapper {

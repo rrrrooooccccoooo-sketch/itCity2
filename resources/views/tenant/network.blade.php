@@ -193,7 +193,7 @@
 
     <span class="topo-sep">|</span>
 
-    <a href="{{ url('/admin') }}" class="topo-btn">⚙ Admin</a>
+    <a href="{{ url('/admin?branch_id=' . $branch->id) }}" class="topo-btn">⚙ Admin</a>
     <a href="{{ url('/sede/' . $branch->id) }}" class="topo-btn">← Sede</a>
     <a href="{{ url('/') }}" class="topo-btn">← Ciudad</a>
 
@@ -595,7 +595,7 @@
                 ${connectedHtml}
                 <div class="d-flex gap-2 mt-3">
                     <a class="btn btn-sm btn-outline-primary" href="${node.detail_url}">Ver ficha</a>
-                    <a class="btn btn-sm btn-dark" href="/admin?edit_node=${node.id}">Configurar nodo</a>
+                    <a class="btn btn-sm btn-dark" href="/admin?edit_node=${node.id}&branch_id={{ $branch->id }}">Configurar nodo</a>
                     <button type="button" class="btn btn-sm btn-outline-danger" data-action="delete-node" data-node-id="${node.id}">Eliminar nodo</button>
                 </div>
             `;

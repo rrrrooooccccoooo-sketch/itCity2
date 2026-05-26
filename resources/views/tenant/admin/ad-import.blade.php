@@ -4,7 +4,11 @@
 @section('page_title', 'Importar usuarios desde Active Directory')
 
 @section('topbar_actions')
-    <a href="{{ url('/admin/users') }}" class="btn btn-sm btn-outline-secondary">← Volver a Usuarios</a>
+    @php
+        $adminContextBranchId = max(0, (int) request()->integer('branch_id', (int) ($currentContextBranchId ?? 0)));
+        $adminUsersUrl = $adminContextBranchId > 0 ? url('/admin/users?branch_id=' . $adminContextBranchId) : url('/admin/users');
+    @endphp
+    <a href="{{ $adminUsersUrl }}" class="btn btn-sm btn-outline-secondary">← Volver a Usuarios</a>
 @endsection
 
 @push('styles')

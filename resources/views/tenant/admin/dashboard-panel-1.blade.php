@@ -3448,6 +3448,25 @@ document.addEventListener('DOMContentLoaded', function () {
     const transferHistoryFilterReset = document.getElementById('transferHistoryFilterReset');
     const transferHistoryNoResults = document.getElementById('transferHistoryNoResults');
     const transferHistoryRows = Array.from(document.querySelectorAll('#transferHistoryTableBody tr[data-transfer-row="1"]'));
+    const contextBranchFilterValue = String(@json(Str::lower($currentContextBranchName ?? '')) || '').trim();
+
+    const applyBranchContextToSelect = (selectId) => {
+        if (!contextBranchFilterValue) return;
+        const selectEl = document.getElementById(selectId);
+        if (!selectEl || String(selectEl.value || '').trim() !== '') return;
+
+        const targetOption = Array.from(selectEl.options || []).find((option) => {
+            const value = String(option.value || '').trim().toLowerCase();
+            const label = String(option.textContent || '').trim().toLowerCase();
+            return value === contextBranchFilterValue || label === contextBranchFilterValue;
+        });
+
+        if (targetOption) {
+            selectEl.value = targetOption.value;
+        }
+    };
+
+    ['spacesFilterBranch', 'nodesFilterBranch', 'monitoringFilterBranch', 'floorPlansFilterBranch', 'inventoryAssetFilterBranch'].forEach(applyBranchContextToSelect);
 
     const normalizeFilterValue = (value) => String(value ?? '')
         .toLowerCase()

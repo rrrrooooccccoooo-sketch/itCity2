@@ -44,6 +44,11 @@ class AdminController extends Controller
 
     public function dashboardPanel1(Request $request): View
     {
+        if ($redirect = $this->canonicalizeAdminUrl($request, '/admin/panel-admin-1')) {
+            return $redirect;
+        }
+
+        $this->hydrateAdminContextBranchQuery($request);
         $request->query->set('panel', '1');
         $data = $this->prepareDashboardData($request);
         return view('tenant.admin.dashboard-panel-1', $data);
@@ -51,6 +56,11 @@ class AdminController extends Controller
 
     public function dashboardPanel2(Request $request): View
     {
+        if ($redirect = $this->canonicalizeAdminUrl($request, '/admin/panel-admin-2')) {
+            return $redirect;
+        }
+
+        $this->hydrateAdminContextBranchQuery($request);
         $request->query->set('panel', '2');
         $data = $this->prepareDashboardData($request);
         return view('tenant.admin.dashboard-panel-2', $data);
@@ -58,6 +68,11 @@ class AdminController extends Controller
 
     public function dashboardPanel3(Request $request): View
     {
+        if ($redirect = $this->canonicalizeAdminUrl($request, '/admin/panel-admin-3')) {
+            return $redirect;
+        }
+
+        $this->hydrateAdminContextBranchQuery($request);
         $request->query->set('panel', '3');
         $data = $this->prepareDashboardData($request);
         return view('tenant.admin.dashboard-panel-3', $data);
@@ -65,6 +80,11 @@ class AdminController extends Controller
 
     public function dashboardLegacy(Request $request): View
     {
+        if ($redirect = $this->canonicalizeAdminUrl($request, '/admin/panel-admin-legacy')) {
+            return $redirect;
+        }
+
+        $this->hydrateAdminContextBranchQuery($request);
         $request->query->set('panel', '1');
         $data = $this->prepareDashboardData($request);
         return view('tenant.admin.dashboard', $data);
@@ -72,6 +92,11 @@ class AdminController extends Controller
 
     public function dashboard(Request $request): View
     {
+        if ($redirect = $this->canonicalizeAdminUrl($request, '/admin')) {
+            return $redirect;
+        }
+
+        $this->hydrateAdminContextBranchQuery($request);
         $request->query->set('panel', '1');
         $data = $this->prepareDashboardData($request);
 
@@ -86,11 +111,23 @@ class AdminController extends Controller
     {
         $panelVariant = max(1, min(3, (int) $request->integer('panel', 1)));
         $branchScopeIds = $this->currentUserBranchScopeIds($request);
+        $requestedContextBranchId = (int) ($this->resolveAdminContextBranchId($request) ?? 0);
+        if ($requestedContextBranchId > 0) {
+            $branchScopeIds = [$requestedContextBranchId];
+        }
 
         $branches = Branch::query()
             ->when($branchScopeIds !== null, fn (Builder $query) => $query->whereIn('id', $branchScopeIds))
             ->orderBy('name')
             ->get();
+        $currentContextBranch = $requestedContextBranchId > 0
+            ? $branches->firstWhere('id', $requestedContextBranchId)
+            : null;
+        if ($currentContextBranch) {
+            $this->rememberAdminContextBranchId($request, (int) $currentContextBranch->id);
+        } elseif ($requestedContextBranchId > 0) {
+            $this->rememberAdminContextBranchId($request, null);
+        }
         $nodeTypes = NodeType::query()->orderBy('name')->get();
         $spaces = PhysicalSpace::query()
             ->with('branch:id,name')
@@ -312,6 +349,8 @@ class AdminController extends Controller
             'panelVariant' => $panelVariant,
             'scopedBranchId' => $branchScopeIds[0] ?? null,
             'scopedBranchIds' => $branchScopeIds,
+            'currentContextBranchId' => $currentContextBranch?->id,
+            'currentContextBranchName' => $currentContextBranch?->name,
         ];
     }
 
@@ -766,17 +805,14 @@ class AdminController extends Controller
     public function monitoringOverview(Request $request): JsonResponse|RedirectResponse
     {
         if (!$request->expectsJson() && !$request->ajax()) {
-            return redirect('/admin#crud-monitoring');
+            return redirect($this->adminBaseUrlWithContext($request) . '#crud-monitoring');
         }
 
         $onlineThreshold = now()->subMinutes(self::MONITORING_ONLINE_WINDOW_MINUTES);
         $branchScopeIds = $this->currentUserBranchScopeIds($request);
-        $requestedBranchId = (int) $request->integer('branch_id', 0);
+        $requestedBranchId = (int) ($this->resolveAdminContextBranchId($request) ?? 0);
 
-        $effectiveBranchIds = $branchScopeIds;
-        if ($effectiveBranchIds === null && $requestedBranchId > 0) {
-            $effectiveBranchIds = [$requestedBranchId];
-        }
+        $effectiveBranchIds = $requestedBranchId > 0 ? [$requestedBranchId] : $branchScopeIds;
 
         $assets = ComputerAsset::query()
             ->with(['branch:id,name', 'node:id,name'])
@@ -977,6 +1013,110 @@ class AdminController extends Controller
         }
 
         return $scopeIds;
+    }
+
+    private function resolveAdminContextBranchId(Request $request): ?int
+    {
+        $requestedBranchId = max(0, (int) $request->integer('branch_id', 0));
+        if ($requestedBranchId > 0) {
+            return $requestedBranchId;
+        }
+
+        if ($request->hasSession()) {
+            $sessionBranchId = max(0, (int) $request->session()->get('tenant_admin_context_branch_id', 0));
+            if ($sessionBranchId > 0) {
+                return $sessionBranchId;
+            }
+        }
+
+        $referer = (string) $request->headers->get('referer', '');
+        if ($referer !== '') {
+            $refererQuery = parse_url($referer, PHP_URL_QUERY);
+            if (is_string($refererQuery) && $refererQuery !== '') {
+                parse_str($refererQuery, $refererParams);
+                $refererBranchId = max(0, (int) ($refererParams['branch_id'] ?? 0));
+                if ($refererBranchId > 0) {
+                    return $refererBranchId;
+                }
+            }
+
+            $refererPath = (string) parse_url($referer, PHP_URL_PATH);
+            if ($refererPath !== '' && preg_match('#/sede/(\d+)$#', $refererPath, $pathMatch)) {
+                $pathBranchId = max(0, (int) ($pathMatch[1] ?? 0));
+                if ($pathBranchId > 0) {
+                    return $pathBranchId;
+                }
+            }
+        }
+
+        if ($request->hasSession()) {
+            $portalContextBranchId = max(0, (int) $request->session()->get('tenant_portal_context_branch_id', 0));
+            if ($portalContextBranchId > 0) {
+                return $portalContextBranchId;
+            }
+        }
+
+        return null;
+    }
+
+    private function hydrateAdminContextBranchQuery(Request $request): void
+    {
+        $requestedBranchId = max(0, (int) $request->integer('branch_id', 0));
+        if ($requestedBranchId > 0) {
+            $this->rememberAdminContextBranchId($request, $requestedBranchId);
+            return;
+        }
+
+        $resolvedBranchId = $this->resolveAdminContextBranchId($request);
+        if ($resolvedBranchId !== null) {
+            $request->query->set('branch_id', (string) $resolvedBranchId);
+            $this->rememberAdminContextBranchId($request, $resolvedBranchId);
+        }
+    }
+
+    private function canonicalizeAdminUrl(Request $request, string $path): ?RedirectResponse
+    {
+        if ($request->query->has('branch_id')) {
+            return null;
+        }
+
+        $resolvedBranchId = $this->resolveAdminContextBranchId($request);
+        if ($resolvedBranchId === null) {
+            return null;
+        }
+
+        $query = $request->query();
+        $query['branch_id'] = $resolvedBranchId;
+
+        return redirect()->to($path . '?' . http_build_query($query));
+    }
+
+    private function rememberAdminContextBranchId(Request $request, ?int $branchId): void
+    {
+        if (!$request->hasSession()) {
+            return;
+        }
+
+        if ($branchId !== null && $branchId > 0) {
+            $request->session()->put('tenant_admin_context_branch_id', (int) $branchId);
+            return;
+        }
+
+        $request->session()->forget('tenant_admin_context_branch_id');
+    }
+
+    private function adminBaseUrlWithContext(Request $request): string
+    {
+        $branchId = $this->resolveAdminContextBranchId($request);
+
+        return $branchId !== null ? '/admin?branch_id=' . $branchId : '/admin';
+    }
+
+    private function adminUsersUrlWithContext(Request $request): string
+    {
+        $branchId = $this->resolveAdminContextBranchId($request);
+
+        return $branchId !== null ? '/admin/users?branch_id=' . $branchId : '/admin/users';
     }
 
     private function assertBranchAccess(?int $resourceBranchId, ?array $branchScopeIds): void
@@ -3658,7 +3798,10 @@ SVG;
 
     private function redirectToCrud(string $anchor, string $status): RedirectResponse
     {
-        return redirect()->to('/admin#' . $anchor)->with('status', $status);
+        $request = request();
+        $baseUrl = $request instanceof Request ? $this->adminBaseUrlWithContext($request) : '/admin';
+
+        return redirect()->to($baseUrl . '#' . $anchor)->with('status', $status);
     }
 
     private function tenantPermissionOptions(): array
@@ -3751,14 +3894,31 @@ SVG;
 
     // ── User Management ───────────────────────────────────────────────────
 
-    public function indexUsers(Request $request): View
+    public function indexUsers(Request $request): View|RedirectResponse
     {
+        $hasExplicitBranchQuery = $request->query->has('branch_id');
+        $requestedBranchId = max(0, (int) $request->integer('branch_id', 0));
+        $this->hydrateAdminContextBranchQuery($request);
+        $resolvedContextBranchId = $this->resolveAdminContextBranchId($request);
+        if (!$hasExplicitBranchQuery && $resolvedContextBranchId !== null) {
+            return redirect()->to('/admin/users?branch_id=' . $resolvedContextBranchId);
+        }
+
+        if ($hasExplicitBranchQuery && $resolvedContextBranchId !== null && $requestedBranchId !== $resolvedContextBranchId) {
+            return redirect()->to('/admin/users?branch_id=' . $resolvedContextBranchId);
+        }
+
         $users    = User::query()->with(['branch', 'branchScopes'])->orderBy('name')->get();
         $branches = Branch::query()->orderBy('name')->get();
         $permissionProfiles = (array) config('tenant_permissions.profiles', []);
         $tenantPermissionOptions = $this->tenantPermissionOptions();
+        $currentContextBranchId = $resolvedContextBranchId;
+        if ($currentContextBranchId !== null && !$branches->contains('id', $currentContextBranchId)) {
+            $currentContextBranchId = null;
+        }
+        $this->rememberAdminContextBranchId($request, $currentContextBranchId);
 
-        return view('tenant.admin.users', compact('users', 'branches', 'permissionProfiles', 'tenantPermissionOptions'));
+        return view('tenant.admin.users', compact('users', 'branches', 'permissionProfiles', 'tenantPermissionOptions', 'currentContextBranchId'));
     }
 
     public function storeUser(Request $request): RedirectResponse
@@ -3825,7 +3985,7 @@ SVG;
 
         $user->branchScopes()->sync($branchScopeIds->all());
 
-        return redirect()->to('/admin/users')->with('status', 'Usuario creado correctamente.');
+        return redirect()->to($this->adminUsersUrlWithContext($request))->with('status', 'Usuario creado correctamente.');
     }
 
     public function updateUser(Request $request, User $user): RedirectResponse
@@ -3888,52 +4048,70 @@ SVG;
         $user->update($data);
         $user->branchScopes()->sync($branchScopeIds->all());
 
-        return redirect()->to('/admin/users')->with('status', 'Usuario actualizado correctamente.');
+        return redirect()->to($this->adminUsersUrlWithContext($request))->with('status', 'Usuario actualizado correctamente.');
     }
 
     public function destroyUser(Request $request, User $user): RedirectResponse
     {
         if ($user->id === $request->user()->id) {
-            return redirect()->to('/admin/users')->with('error', 'No puedes eliminar tu propia cuenta.');
+            return redirect()->to($this->adminUsersUrlWithContext($request))->with('error', 'No puedes eliminar tu propia cuenta.');
         }
 
         $user->delete();
 
-        return redirect()->to('/admin/users')->with('status', 'Usuario eliminado correctamente.');
+        return redirect()->to($this->adminUsersUrlWithContext($request))->with('status', 'Usuario eliminado correctamente.');
     }
 
     public function sendPasswordResetLink(Request $request, User $user): RedirectResponse
     {
         if ($user->id === $request->user()->id) {
-            return redirect()->to('/admin/users')->with('error', 'No es necesario enviarte enlace de restablecimiento desde esta opción.');
+            return redirect()->to($this->adminUsersUrlWithContext($request))->with('error', 'No es necesario enviarte enlace de restablecimiento desde esta opción.');
         }
 
         if (($user->auth_source ?? 'local') !== 'local') {
-            return redirect()->to('/admin/users')->with('error', 'Los usuarios de Active Directory deben restablecer su contraseña desde AD.');
+            return redirect()->to($this->adminUsersUrlWithContext($request))->with('error', 'Los usuarios de Active Directory deben restablecer su contraseña desde AD.');
         }
 
         if (!($user->is_active ?? true)) {
-            return redirect()->to('/admin/users')->with('error', 'El usuario está inactivo. Actívalo antes de enviar el enlace.');
+            return redirect()->to($this->adminUsersUrlWithContext($request))->with('error', 'El usuario está inactivo. Actívalo antes de enviar el enlace.');
         }
 
         $status = Password::broker()->sendResetLink(['email' => $user->email]);
 
         if ($status === Password::RESET_LINK_SENT) {
-            return redirect()->to('/admin/users')->with('status', 'Enlace de restablecimiento enviado correctamente.');
+            return redirect()->to($this->adminUsersUrlWithContext($request))->with('status', 'Enlace de restablecimiento enviado correctamente.');
         }
 
-        return redirect()->to('/admin/users')->with('error', __($status));
+        return redirect()->to($this->adminUsersUrlWithContext($request))->with('error', __($status));
     }
 
     /* ─────────────────────────────────────────────────────────────────────
      |  AD Import
      | ──────────────────────────────────────────────────────────────────── */
 
-    public function showAdImport(): View
+    public function showAdImport(Request $request): View|RedirectResponse
     {
+        $hasExplicitBranchQuery = $request->query->has('branch_id');
+        $requestedBranchId = max(0, (int) $request->integer('branch_id', 0));
+        $this->hydrateAdminContextBranchQuery($request);
+        $resolvedContextBranchId = $this->resolveAdminContextBranchId($request);
+        if (!$hasExplicitBranchQuery && $resolvedContextBranchId !== null) {
+            return redirect()->to('/admin/users/ad-import?branch_id=' . $resolvedContextBranchId);
+        }
+
+        if ($hasExplicitBranchQuery && $resolvedContextBranchId !== null && $requestedBranchId !== $resolvedContextBranchId) {
+            return redirect()->to('/admin/users/ad-import?branch_id=' . $resolvedContextBranchId);
+        }
+
         $branches           = Branch::query()->orderBy('name')->get();
         $permissionProfiles = (array) config('tenant_permissions.profiles', []);
-        return view('tenant.admin.ad-import', compact('branches', 'permissionProfiles'));
+        $currentContextBranchId = $resolvedContextBranchId;
+        if ($currentContextBranchId !== null && !$branches->contains('id', $currentContextBranchId)) {
+            $currentContextBranchId = null;
+        }
+        $this->rememberAdminContextBranchId($request, $currentContextBranchId);
+
+        return view('tenant.admin.ad-import', compact('branches', 'permissionProfiles', 'currentContextBranchId'));
     }
 
     public function fetchAdUsers(Request $request): JsonResponse
@@ -4091,6 +4269,6 @@ SVG;
             $msg .= " {$skipped} omitido(s) (ya existen o email inválido).";
         }
 
-        return redirect()->to('/admin/users')->with('status', $msg);
+        return redirect()->to($this->adminUsersUrlWithContext($request))->with('status', $msg);
     }
 }

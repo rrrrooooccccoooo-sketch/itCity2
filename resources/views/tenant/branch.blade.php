@@ -5,7 +5,7 @@
 
 @section('topbar_actions')
     <a href="{{ url('/sede/' . $branch->id . '/red') }}" class="btn btn-sm btn-primary">Mapa de red</a>
-    <a href="{{ url('/admin') }}" class="btn btn-sm btn-dark">Admin</a>
+    <a href="{{ url('/admin?branch_id=' . $branch->id) }}" class="btn btn-sm btn-dark">Admin</a>
     <a href="{{ url('/') }}" class="btn btn-sm btn-outline-secondary">Ciudad</a>
 @endsection
 
@@ -596,7 +596,7 @@
                                             @if (optional($system->node)->id)
                                                 <a href="{{ url('/nodos/' . $system->node->id) }}" class="btn btn-sm btn-outline-primary">Ir al nodo</a>
                                             @else
-                                                <a href="{{ url('/admin?edit_software=' . $system->id) }}" class="btn btn-sm btn-outline-secondary">Configurar</a>
+                                                <a href="{{ url('/admin?edit_software=' . $system->id . '&branch_id=' . $branch->id) }}" class="btn btn-sm btn-outline-secondary">Configurar</a>
                                             @endif
                                         </div>
                                     </div>
@@ -605,7 +605,7 @@
                                         <div class="name">Sin software registrado</div>
                                         <div class="small">No hay sistemas para esta sucursal</div>
                                         <div class="mt-2">
-                                            <a href="{{ url('/admin') }}" class="btn btn-sm btn-outline-secondary">Ir a Admin</a>
+                                            <a href="{{ url('/admin?branch_id=' . $branch->id) }}" class="btn btn-sm btn-outline-secondary">Ir a Admin</a>
                                         </div>
                                     </div>
                                 @endforelse
@@ -746,7 +746,7 @@
     <div id="portPopupTitle" style="font-weight:700;font-size:.86rem;margin-bottom:3px"></div>
     <div id="portPopupStatus" style="font-size:.75rem;margin-bottom:2px"></div>
     <div id="portPopupConnected" style="color:#64748b;font-size:.75rem;margin-bottom:10px"></div>
-    <a id="portPopupEditLink" href="/admin" class="btn btn-sm btn-outline-primary w-100" style="font-size:.76rem">Configurar en Admin</a>
+    <a id="portPopupEditLink" href="/admin?branch_id={{ $branch->id }}" class="btn btn-sm btn-outline-primary w-100" style="font-size:.76rem">Configurar en Admin</a>
 </div>
 
 @endsection
@@ -928,7 +928,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="hier-title">Sin software registrado</div>
                 <div class="hier-meta">No hay sistemas en esta sucursal o no coinciden con la búsqueda.</div>
                 <div class="mt-2">
-                    <a class="btn btn-sm btn-outline-secondary" href="/admin">Ir a Admin</a>
+                    <a class="btn btn-sm btn-outline-secondary" href="/admin?branch_id={{ $branch->id }}">Ir a Admin</a>
                 </div>
             </div>
         `;
@@ -1130,7 +1130,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 document.getElementById('portPopupTitle').textContent = name;
                 document.getElementById('portPopupStatus').textContent = statusLabel[status] || status;
                 document.getElementById('portPopupConnected').textContent = connected ? `Conectado a: ${connected}` : 'Sin conexión registrada';
-                document.getElementById('portPopupEditLink').href = nodeId ? `/admin?edit_node=${nodeId}` : '/admin';
+                document.getElementById('portPopupEditLink').href = nodeId ? `/admin?edit_node=${nodeId}&branch_id={{ $branch->id }}` : '/admin?branch_id={{ $branch->id }}';
                 portPopup.style.display = '';
                 const rect = portSpan.getBoundingClientRect();
                 const pw = portPopup.offsetWidth || 200;
