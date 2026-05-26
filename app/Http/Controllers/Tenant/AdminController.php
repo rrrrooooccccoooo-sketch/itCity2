@@ -3898,13 +3898,22 @@ SVG;
     {
         $hasExplicitBranchQuery = $request->query->has('branch_id');
         $requestedBranchId = max(0, (int) $request->integer('branch_id', 0));
+
+        if ($hasExplicitBranchQuery && $requestedBranchId > 0) {
+            $this->rememberAdminContextBranchId($request, $requestedBranchId);
+            $users = User::query()->with(['branch', 'branchScopes'])->orderBy('name')->get();
+            $branches = Branch::query()->orderBy('name')->get();
+            $permissionProfiles = (array) config('tenant_permissions.profiles', []);
+            $tenantPermissionOptions = $this->tenantPermissionOptions();
+            $currentContextBranchId = $branches->contains('id', $requestedBranchId) ? $requestedBranchId : null;
+            $this->rememberAdminContextBranchId($request, $currentContextBranchId);
+
+            return view('tenant.admin.users', compact('users', 'branches', 'permissionProfiles', 'tenantPermissionOptions', 'currentContextBranchId'));
+        }
+
         $this->hydrateAdminContextBranchQuery($request);
         $resolvedContextBranchId = $this->resolveAdminContextBranchId($request);
         if (!$hasExplicitBranchQuery && $resolvedContextBranchId !== null) {
-            return redirect()->to('/admin/users?branch_id=' . $resolvedContextBranchId);
-        }
-
-        if ($hasExplicitBranchQuery && $resolvedContextBranchId !== null && $requestedBranchId !== $resolvedContextBranchId) {
             return redirect()->to('/admin/users?branch_id=' . $resolvedContextBranchId);
         }
 
@@ -4093,13 +4102,20 @@ SVG;
     {
         $hasExplicitBranchQuery = $request->query->has('branch_id');
         $requestedBranchId = max(0, (int) $request->integer('branch_id', 0));
+
+        if ($hasExplicitBranchQuery && $requestedBranchId > 0) {
+            $this->rememberAdminContextBranchId($request, $requestedBranchId);
+            $branches = Branch::query()->orderBy('name')->get();
+            $permissionProfiles = (array) config('tenant_permissions.profiles', []);
+            $currentContextBranchId = $branches->contains('id', $requestedBranchId) ? $requestedBranchId : null;
+            $this->rememberAdminContextBranchId($request, $currentContextBranchId);
+
+            return view('tenant.admin.ad-import', compact('branches', 'permissionProfiles', 'currentContextBranchId'));
+        }
+
         $this->hydrateAdminContextBranchQuery($request);
         $resolvedContextBranchId = $this->resolveAdminContextBranchId($request);
         if (!$hasExplicitBranchQuery && $resolvedContextBranchId !== null) {
-            return redirect()->to('/admin/users/ad-import?branch_id=' . $resolvedContextBranchId);
-        }
-
-        if ($hasExplicitBranchQuery && $resolvedContextBranchId !== null && $requestedBranchId !== $resolvedContextBranchId) {
             return redirect()->to('/admin/users/ad-import?branch_id=' . $resolvedContextBranchId);
         }
 

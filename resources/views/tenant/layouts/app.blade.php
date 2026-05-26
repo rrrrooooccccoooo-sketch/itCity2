@@ -480,6 +480,27 @@
         $navBranch  = (str_starts_with($path, 'sede/') && !str_ends_with($path, '/red')) ? 'active' : '';
         $navAdmin   = str_starts_with($path, 'admin') ? 'active' : '';
         $navTopo    = ($path === 'red') ? 'active' : '';
+
+        $routeBranchParam = request()->route('branch');
+        $routeNodeParam = request()->route('node');
+
+        $sidebarBranch = null;
+        if ($routeBranchParam instanceof \App\Models\Branch) {
+            $sidebarBranch = $routeBranchParam;
+        } elseif (is_numeric($routeBranchParam)) {
+            $sidebarBranch = \App\Models\Branch::query()->find((int) $routeBranchParam);
+        } elseif (str_starts_with($path, 'sede/') && isset($branch) && $branch instanceof \App\Models\Branch) {
+            $sidebarBranch = $branch;
+        }
+
+        $sidebarNode = null;
+        if ($routeNodeParam instanceof \App\Models\Node) {
+            $sidebarNode = $routeNodeParam;
+        } elseif (is_numeric($routeNodeParam)) {
+            $sidebarNode = \App\Models\Node::query()->with('branch')->find((int) $routeNodeParam);
+        } elseif (str_starts_with($path, 'nodos/') && isset($node) && $node instanceof \App\Models\Node) {
+            $sidebarNode = $node;
+        }
     @endphp
 
     <div class="sb-group-title">Portal</div>
@@ -498,19 +519,18 @@
         Topología Global
     </a>
 
-    @isset($branch)
+    @if ($sidebarBranch)
     <div class="sb-group-title">Sede</div>
-    <a href="{{ url('/sede/' . $branch->id) }}" class="sb-link {{ $navBranch }}">
+    <a href="{{ url('/sede/' . $sidebarBranch->id) }}" class="sb-link {{ $navBranch }}">
         <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" fill="currentColor" viewBox="0 0 16 16">
             <path d="M3 0h10a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V1a1 1 0 0 1 1-1zm0 1v14h10V1H3z"/>
             <path d="M5 4a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2H5zm5 0a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2h-1zm-5 4a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2H5zm5 0a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2h-1z"/>
         </svg>
-        {{ Str::limit($branch->name, 22) }}
+        {{ Str::limit($sidebarBranch->name, 22) }}
     </a>
-    @endisset
+    @endif
 
-    @isset($node)
-    @php $nb = $node->branch; @endphp
+    @php $nb = $sidebarNode?->branch; @endphp
     @if ($nb)
     <div class="sb-group-title">Sede</div>
     <a href="{{ url('/sede/' . $nb->id) }}" class="sb-link">
@@ -520,14 +540,13 @@
         {{ Str::limit($nb->name, 22) }}
     </a>
     <div class="sb-group-title">Nodo</div>
-    <a href="{{ url('/nodos/' . $node->id) }}" class="sb-link active">
+    <a href="{{ url('/nodos/' . $sidebarNode->id) }}" class="sb-link active">
         <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" fill="currentColor" viewBox="0 0 16 16">
             <path d="M5 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H5zm0 1h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/>
         </svg>
-        {{ Str::limit($node->name, 22) }}
+        {{ Str::limit($sidebarNode->name, 22) }}
     </a>
     @endif
-    @endisset
 
     @php
         $requestedAdminBranchId = max(0, (int) request()->integer('branch_id', 0));
@@ -538,10 +557,10 @@
             $adminBranchContextId = $requestedAdminBranchId;
         } elseif (isset($currentContextBranchId) && (int) $currentContextBranchId > 0) {
             $adminBranchContextId = (int) $currentContextBranchId;
-        } elseif (isset($branch)) {
-            $adminBranchContextId = $branch->id;
-        } elseif (isset($node)) {
-            $adminBranchContextId = $node->branch_id ?? null;
+        } elseif ($sidebarBranch) {
+            $adminBranchContextId = $sidebarBranch->id;
+        } elseif ($sidebarNode) {
+            $adminBranchContextId = $sidebarNode->branch_id ?? null;
         } elseif ($sessionAdminBranchId > 0) {
             $adminBranchContextId = $sessionAdminBranchId;
         } elseif ($portalContextBranchId > 0) {
@@ -550,7 +569,22 @@
 
         $adminPanelUrl = $adminBranchContextId ? url('/admin?branch_id=' . $adminBranchContextId) : url('/admin');
         $adminUsersUrl = $adminBranchContextId ? url('/admin/users?branch_id=' . $adminBranchContextId) : url('/admin/users');
+        $sidebarContextBranch = null;
+        if ($adminBranchContextId) {
+            $sidebarContextBranch = \App\Models\Branch::query()->find((int) $adminBranchContextId);
+        }
     @endphp
+
+    @if (!$sidebarBranch && !$sidebarNode && $sidebarContextBranch)
+    <div class="sb-group-title">Sede</div>
+    <a href="{{ url('/sede/' . $sidebarContextBranch->id) }}" class="sb-link {{ $navBranch }}">
+        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" fill="currentColor" viewBox="0 0 16 16">
+            <path d="M3 0h10a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V1a1 1 0 0 1 1-1zm0 1v14h10V1H3z"/>
+            <path d="M5 4a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2H5zm5 0a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2h-1zm-5 4a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2H5zm5 0a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2h-1z"/>
+        </svg>
+        {{ Str::limit($sidebarContextBranch->name, 22) }}
+    </a>
+    @endif
 
     <div class="sb-group-title">Administración</div>
     <a href="{{ $adminPanelUrl }}" class="sb-link {{ $navAdmin }}">
