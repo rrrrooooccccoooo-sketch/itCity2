@@ -185,6 +185,30 @@
         .tb-breadcrumb a:hover { color: #2563eb; }
         .tb-breadcrumb span { margin: 0 5px; }
 
+        .tb-user-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 10px;
+            border: 1px solid #dbe4f0;
+            border-radius: 999px;
+            background: #f8fbff;
+            font-size: .78rem;
+            color: #334155;
+            white-space: nowrap;
+        }
+
+        .tb-nav-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            border-radius: 999px;
+            font-size: .78rem;
+            line-height: 1;
+            padding: .4rem .65rem;
+            white-space: nowrap;
+        }
+
         /* ── Content ───────────────────────────── */
         #ic-content {
             flex: 1;
@@ -613,9 +637,33 @@
 
 {{-- ── Main ──────────────────────────────────── --}}
 <div id="ic-main">
+    @php
+        $topbarMainUrl = url('/');
+    @endphp
     <div id="ic-topbar">
         <div class="tb-title">@yield('page_title', 'ITCity')</div>
         <div class="d-flex gap-2 align-items-center">
+            @auth
+            <span class="tb-user-pill" title="Usuario logueado">
+                <i class="bi bi-person-circle" aria-hidden="true"></i>
+                {{ auth()->user()->name }}
+            </span>
+            <a href="{{ $topbarMainUrl }}" class="btn btn-sm btn-outline-primary tb-nav-btn">
+                <i class="bi bi-house-door" aria-hidden="true"></i>
+                Principal
+            </a>
+            <button type="button" class="btn btn-sm btn-outline-secondary tb-nav-btn" onclick="window.itcityGoBackWithFallback && window.itcityGoBackWithFallback('{{ $topbarMainUrl }}')">
+                <i class="bi bi-arrow-left" aria-hidden="true"></i>
+                Regresar
+            </button>
+            <form method="POST" action="{{ route('logout') }}" class="m-0">
+                @csrf
+                <button type="submit" class="btn btn-sm btn-outline-danger tb-nav-btn">
+                    <i class="bi bi-box-arrow-right" aria-hidden="true"></i>
+                    Cerrar sesión
+                </button>
+            </form>
+            @endauth
             @yield('topbar_actions')
         </div>
     </div>
@@ -628,6 +676,17 @@
 
 <script>
     (function () {
+        window.itcityGoBackWithFallback = function (fallbackUrl) {
+            if (window.history.length > 1) {
+                window.history.back();
+                return;
+            }
+
+            if (fallbackUrl) {
+                window.location.href = fallbackUrl;
+            }
+        };
+
         const ADMIN_CONTEXT_STORAGE_KEY = 'tenant_admin_context_branch_id';
         const readPositiveInt = (value) => {
             const normalized = String(value ?? '').trim();

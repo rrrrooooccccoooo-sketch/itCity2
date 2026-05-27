@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ $tenantName }} | ITCity</title>
     @vite(['resources/sass/app.scss', 'resources/js/app.js'])
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <style>
         * { box-sizing: border-box; }
 
@@ -25,6 +26,84 @@
             transform: translate3d(var(--city-pz-shift-x, 0px), var(--city-pz-shift-y, 0px), 0) scale(var(--city-pz-scale, 1.08));
             opacity: .22;
             filter: blur(3px);
+        }
+
+        .city-topbar {
+            position: sticky;
+            top: 0;
+            z-index: 1400;
+            background: #fff;
+            border-bottom: 1px solid #dbe4f0;
+            padding: 6px 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .city-topbar-left {
+            font-size: .84rem;
+            font-weight: 700;
+            color: #0f172a;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .city-topbar-right {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: nowrap;
+            justify-content: flex-end;
+            min-width: 0;
+            overflow-x: auto;
+            scrollbar-width: none;
+        }
+
+        .city-topbar-right::-webkit-scrollbar {
+            display: none;
+        }
+
+        .city-user-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 9px;
+            border: 1px solid #dbe4f0;
+            border-radius: 999px;
+            background: #f8fbff;
+            font-size: .72rem;
+            color: #334155;
+            white-space: nowrap;
+        }
+
+        .city-nav-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            border-radius: 999px;
+            font-size: .72rem;
+            line-height: 1;
+            padding: .3rem .55rem;
+            white-space: nowrap;
+        }
+
+        .city-nav-warning {
+            color: #111827 !important;
+        }
+
+        .city-nav-warning:hover,
+        .city-nav-warning:focus {
+            color: #111827 !important;
+        }
+
+        .city-nav-label {
+            display: inline;
+        }
+
+        .city-user-name {
+            display: inline;
         }
 
         @keyframes cityPreziEnter {
@@ -386,9 +465,68 @@
             .building-3d { max-width: 160px; height: 180px; }
             .hero h1 { font-size: 1.5rem; }
         }
+
+        @media (max-width: 576px) {
+            .city-topbar {
+                padding: 5px 10px;
+                gap: 6px;
+            }
+
+            .city-topbar-left {
+                font-size: .78rem;
+            }
+
+            .city-user-name,
+            .city-nav-label {
+                display: none;
+            }
+
+            .city-user-pill {
+                padding: 4px 8px;
+                gap: 0;
+            }
+
+            .city-nav-btn {
+                padding: .28rem .42rem;
+                min-width: 2.1rem;
+                justify-content: center;
+            }
+        }
     </style>
 </head>
 <body>
+@php
+    $cityMainUrl = url('/');
+@endphp
+
+<div class="city-topbar">
+    <div class="city-topbar-left">{{ $tenantName }}</div>
+    <div class="city-topbar-right">
+        @auth
+        <span class="city-user-pill" title="Usuario logueado">
+            <i class="bi bi-person-circle" aria-hidden="true"></i>
+            <span class="city-user-name">{{ auth()->user()->name }}</span>
+        </span>
+        @endauth
+        <a href="/admin#crud-branches" class="btn btn-sm btn-outline-warning city-nav-btn city-nav-warning">
+            <i class="bi bi-gear-fill" aria-hidden="true"></i>
+            <span class="city-nav-label">Administrar</span>
+        </a>
+        <a href="#campus" class="btn btn-sm btn-outline-info city-nav-btn">
+            <i class="bi bi-compass" aria-hidden="true"></i>
+            <span class="city-nav-label">Explorar</span>
+        </a>
+        @auth
+        <form method="POST" action="{{ route('logout') }}" class="m-0">
+            @csrf
+            <button type="submit" class="btn btn-sm btn-outline-danger city-nav-btn">
+                <i class="bi bi-box-arrow-right" aria-hidden="true"></i>
+                <span class="city-nav-label">Cerrar sesión</span>
+            </button>
+        </form>
+        @endauth
+    </div>
+</div>
 
 <!-- ── Hero Section ──────────────────────────────── -->
 <div class="hero">
@@ -405,10 +543,6 @@
         </div>
         <h1>{{ $tenantName }}</h1>
         <p class="h-sub">Campus interconectado · Monitoreo centralizado · Control integral</p>
-        <div class="h-btn-group">
-            <a href="/admin#crud-branches" class="btn btn-light btn-sm">⚙ Administrar</a>
-            <a href="{{ url('#campus') }}" class="btn btn-outline-light btn-sm">Explorar</a>
-        </div>
     </div>
 </div>
 
@@ -505,6 +639,17 @@
 <div id="cityPreziMask" aria-hidden="true"></div>
 
 <script>
+    window.itcityCityGoBackWithFallback = function (fallbackUrl) {
+        if (window.history.length > 1) {
+            window.history.back();
+            return;
+        }
+
+        if (fallbackUrl) {
+            window.location.href = fallbackUrl;
+        }
+    };
+
     if (!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) {
         requestAnimationFrame(() => {
             document.body.classList.add('prezi-enter');
