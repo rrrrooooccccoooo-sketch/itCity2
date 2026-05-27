@@ -18,8 +18,18 @@ return new class extends Migration {
 
             $table->foreignId('requested_by_user_id')->nullable()->constrained('users', 'catr_req_by_fk')->nullOnDelete();
             $table->string('requested_by_name', 120);
-            $table->foreignId('requested_from_branch_id')->nullable()->constrained('branches', 'catr_from_branch_fk')->nullOnDelete();
-            $table->foreignId('requested_to_branch_id')->constrained('branches', 'catr_to_branch_fk')->restrictOnDelete();
+            $table->unsignedBigInteger('requested_from_branch_id')->nullable();
+            $table->unsignedBigInteger('requested_to_branch_id');
+
+            $table->foreign('requested_from_branch_id', 'catr_from_branch_fk')
+                ->references('id')
+                ->on('branches')
+                ->nullOnDelete();
+
+            $table->foreign('requested_to_branch_id', 'catr_to_branch_fk')
+                ->references('id')
+                ->on('branches')
+                ->restrictOnDelete();
 
             $table->foreignId('requested_to_user_id')->nullable()->constrained('users', 'catr_req_to_fk')->nullOnDelete();
             $table->string('requested_to_user_name', 120);
@@ -35,9 +45,9 @@ return new class extends Migration {
 
             $table->timestamps();
 
-            $table->index(['computer_asset_id', 'status']);
-            $table->index(['requested_to_user_id', 'status']);
-            $table->index(['requested_by_user_id', 'status']);
+            $table->index(['computer_asset_id', 'status'], 'catr_asset_status_idx');
+            $table->index(['requested_to_user_id', 'status'], 'catr_to_user_status_idx');
+            $table->index(['requested_by_user_id', 'status'], 'catr_by_user_status_idx');
         });
     }
 

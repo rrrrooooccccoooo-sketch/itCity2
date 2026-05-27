@@ -7,13 +7,22 @@
     @vite(['resources/sass/app.scss', 'resources/js/app.js'])
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <style>
+        :root {
+            --brand-primary: {{ $tenantColors['primary'] ?? '#2563EB' }};
+            --brand-secondary: {{ $tenantColors['secondary'] ?? '#0F172A' }};
+            --brand-accent: {{ $tenantColors['accent'] ?? '#38BDF8' }};
+            --brand-bg: {{ $tenantColors['background'] ?? '#F1F5F9' }};
+            --brand-text: {{ $tenantColors['text'] ?? '#111827' }};
+        }
+
         * { box-sizing: border-box; }
 
         body {
-            background: linear-gradient(180deg, #f0f4f9 0%, #e8edf3 100%);
+            background: linear-gradient(180deg, color-mix(in srgb, var(--brand-bg) 88%, #ffffff 12%) 0%, var(--brand-bg) 100%);
             margin: 0;
             font-family: inherit;
             min-height: 100vh;
+            color: var(--brand-text);
             transition: transform .38s ease, opacity .3s ease, filter .3s ease;
         }
 
@@ -44,7 +53,7 @@
         .city-topbar-left {
             font-size: .84rem;
             font-weight: 700;
-            color: #0f172a;
+            color: var(--brand-secondary);
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -121,7 +130,7 @@
 
         /* ── Hero Section ──────────────────────── */
         .hero {
-            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            background: linear-gradient(135deg, var(--brand-secondary) 0%, var(--brand-primary) 100%);
             color: #fff;
             padding: 40px 24px;
             text-align: center;
@@ -140,10 +149,10 @@
         .hero .h-logo-icon {
             width: 40px; height: 40px;
             border-radius: 10px;
-            background: rgba(37, 99, 235, .2);
+            background: color-mix(in srgb, var(--brand-accent) 24%, transparent);
             display: flex; align-items: center; justify-content: center;
             font-size: 1.3rem;
-            border: 1px solid rgba(37, 99, 235, .3);
+            border: 1px solid color-mix(in srgb, var(--brand-accent) 42%, transparent);
         }
 
         .hero h1 {
@@ -512,6 +521,14 @@
             <i class="bi bi-gear-fill" aria-hidden="true"></i>
             <span class="city-nav-label">Administrar</span>
         </a>
+        @auth
+        @if (auth()->user()->hasTenantPermission('tenant.admin'))
+        <a href="/admin/branding" class="btn btn-sm btn-outline-primary city-nav-btn">
+            <i class="bi bi-palette-fill" aria-hidden="true"></i>
+            <span class="city-nav-label">Branding</span>
+        </a>
+        @endif
+        @endauth
         <a href="#campus" class="btn btn-sm btn-outline-info city-nav-btn">
             <i class="bi bi-compass" aria-hidden="true"></i>
             <span class="city-nav-label">Explorar</span>
@@ -535,7 +552,7 @@
             <div class="h-logo-icon">🏙</div>
             <div style="text-align: left">
                 <div style="font-size: .8rem; color: #94a3b8">GESTIÓN DE INFRAESTRUCTURA</div>
-                <div style="font-size: 1.05rem; font-weight: 700">ITCity</div>
+                <div style="font-size: 1.05rem; font-weight: 700">{{ $tenantName }}</div>
             </div>
             @if (!empty($tenantLogo))
                 <img src="{{ $tenantLogo }}" alt="Logo" style="width: 36px; height: 36px; object-fit: cover; border-radius: 8px; border: 1px solid rgba(255,255,255,.2); margin-left: auto;">
@@ -667,6 +684,29 @@
     const transitionLayer = document.getElementById('cityTransitionLayer');
     const transitionBranchName = document.getElementById('transitionBranchName');
     const branchLinks = document.querySelectorAll('.js-branch-entry');
+
+    const resetCityTransitionState = () => {
+        document.body.classList.remove('prezi-nav', 'prezi-enter');
+
+        const root = document.documentElement;
+        root.style.removeProperty('--city-pz-origin-x');
+        root.style.removeProperty('--city-pz-origin-y');
+        root.style.removeProperty('--city-pz-shift-x');
+        root.style.removeProperty('--city-pz-shift-y');
+        root.style.removeProperty('--city-pz-scale');
+
+        if (transitionLayer) {
+            transitionLayer.classList.remove('active');
+        }
+
+        document.querySelectorAll('.building-wrapper').forEach((wrapper) => {
+            wrapper.classList.remove('is-entering', 'is-faded');
+        });
+    };
+
+    // Ensure the city page returns to a clean visual state after browser Back/Forward restores.
+    resetCityTransitionState();
+    window.addEventListener('pageshow', resetCityTransitionState);
 
     branchLinks.forEach((link) => {
         link.addEventListener('click', (event) => {

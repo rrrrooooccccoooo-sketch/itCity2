@@ -20,6 +20,7 @@ use App\Models\NodeRelation;
 use App\Models\NodeType;
 use App\Models\PhysicalSpace;
 use App\Models\SoftwareSystem;
+use App\Models\TenantBranding;
 use App\Support\ComputerAssetInventorySummary;
 use App\Support\NodeConnectionSnapshot;
 use App\Models\User;
@@ -5522,11 +5523,22 @@ SVG;
     {
         $hasExplicitBranchQuery = $request->query->has('branch_id');
         $requestedBranchId = max(0, (int) $request->integer('branch_id', 0));
+        $branchScopeIds = $this->currentUserBranchScopeIds($request);
+        $currentUserId = (int) optional($request->user())->id;
+
+        if ($hasExplicitBranchQuery && $requestedBranchId > 0) {
+            $this->assertBranchAccess($requestedBranchId, $branchScopeIds);
+        }
 
         if ($hasExplicitBranchQuery && $requestedBranchId > 0) {
             $this->rememberAdminContextBranchId($request, $requestedBranchId);
-            $users = User::query()->with(['branch', 'branchScopes'])->orderBy('name')->get();
-            $branches = Branch::query()->orderBy('name')->get();
+            $users = $this->tenantScopedUsersQuery($branchScopeIds, $requestedBranchId, $currentUserId)
+                ->orderBy('name')
+                ->get();
+            $branches = Branch::query()
+                ->when($branchScopeIds !== null, fn (Builder $query) => $query->whereIn('id', $branchScopeIds))
+                ->orderBy('name')
+                ->get();
             $permissionProfiles = (array) config('tenant_permissions.profiles', []);
             $tenantPermissionOptions = $this->tenantPermissionOptions();
             $currentContextBranchId = $branches->contains('id', $requestedBranchId) ? $requestedBranchId : null;
@@ -5541,8 +5553,13 @@ SVG;
             return redirect()->to('/admin/users?branch_id=' . $resolvedContextBranchId);
         }
 
-        $users    = User::query()->with(['branch', 'branchScopes'])->orderBy('name')->get();
-        $branches = Branch::query()->orderBy('name')->get();
+        $users = $this->tenantScopedUsersQuery($branchScopeIds, $resolvedContextBranchId, $currentUserId)
+            ->orderBy('name')
+            ->get();
+        $branches = Branch::query()
+            ->when($branchScopeIds !== null, fn (Builder $query) => $query->whereIn('id', $branchScopeIds))
+            ->orderBy('name')
+            ->get();
         $permissionProfiles = (array) config('tenant_permissions.profiles', []);
         $tenantPermissionOptions = $this->tenantPermissionOptions();
         $currentContextBranchId = $resolvedContextBranchId;
@@ -5552,6 +5569,38 @@ SVG;
         $this->rememberAdminContextBranchId($request, $currentContextBranchId);
 
         return view('tenant.admin.users', compact('users', 'branches', 'permissionProfiles', 'tenantPermissionOptions', 'currentContextBranchId'));
+    }
+
+    private function tenantScopedUsersQuery(?array $branchScopeIds, ?int $branchId = null, ?int $currentUserId = null): Builder
+    {
+        $query = User::query()->with(['branch', 'branchScopes']);
+
+        if ($branchScopeIds !== null) {
+            $query->where(function (Builder $scoped) use ($branchScopeIds): void {
+                $scoped
+                    ->where('role', 'admin')
+                    ->orWhereNull('branch_id')
+                    ->orWhereIn('branch_id', $branchScopeIds)
+                    ->orWhereHas('branchScopes', fn (Builder $branchScopeQuery) => $branchScopeQuery->whereIn('branches.id', $branchScopeIds));
+            });
+        }
+
+        $branchId = $branchId !== null ? max(0, (int) $branchId) : 0;
+        if ($branchId > 0) {
+            $query->where(function (Builder $filtered) use ($branchId): void {
+                $filtered
+                    ->where('role', 'admin')
+                    ->orWhereNull('branch_id')
+                    ->orWhere('branch_id', $branchId)
+                    ->orWhereHas('branchScopes', fn (Builder $branchScopeQuery) => $branchScopeQuery->where('branches.id', $branchId));
+            });
+        }
+
+        if ($currentUserId !== null && $currentUserId > 0) {
+            $query->orWhere('id', $currentUserId);
+        }
+
+        return $query;
     }
 
     public function storeUser(Request $request): RedirectResponse
@@ -5910,5 +5959,123 @@ SVG;
         }
 
         return redirect()->to($this->adminUsersUrlWithContext($request))->with('status', $msg);
+    }
+
+    public function showBrandingSettings(Request $request): View|RedirectResponse
+    {
+        if ($redirect = $this->canonicalizeAdminUrl($request, '/admin/branding')) {
+            return $redirect;
+        }
+
+        if (!Schema::hasTable('tenant_brandings')) {
+            return redirect()
+                ->to(url('/admin'))
+                ->with('status', 'El módulo de branding aún no está disponible para este tenant. Ejecuta la migración tenant pendiente.');
+        }
+
+        $branding = TenantBranding::query()->first();
+        if (!$branding) {
+            $branding = new TenantBranding([
+                'company_name' => 'ITCity',
+                'primary_color' => '#2563eb',
+                'secondary_color' => '#0f172a',
+                'accent_color' => '#38bdf8',
+                'background_color' => '#f1f5f9',
+                'text_color' => '#111827',
+            ]);
+        }
+
+        $brandingLogoUrl = !empty($branding->logo_path)
+            ? url('/storage/' . ltrim((string) $branding->logo_path, '/'))
+            : null;
+
+        return view('tenant.admin.branding', [
+            'branding' => $branding,
+            'brandingLogoUrl' => $brandingLogoUrl,
+        ]);
+    }
+
+    public function saveBrandingSettings(Request $request): RedirectResponse
+    {
+        if (!Schema::hasTable('tenant_brandings')) {
+            return redirect()
+                ->to(url('/admin'))
+                ->with('status', 'No se puede guardar branding: falta la tabla tenant_brandings en este tenant.');
+        }
+
+        $validated = $request->validate([
+            'branding_company_name' => ['nullable', 'string', 'max:120'],
+            'branding_primary_color' => ['required', 'regex:/^#[0-9A-Fa-f]{6}$/'],
+            'branding_secondary_color' => ['required', 'regex:/^#[0-9A-Fa-f]{6}$/'],
+            'branding_accent_color' => ['required', 'regex:/^#[0-9A-Fa-f]{6}$/'],
+            'branding_background_color' => ['required', 'regex:/^#[0-9A-Fa-f]{6}$/'],
+            'branding_text_color' => ['required', 'regex:/^#[0-9A-Fa-f]{6}$/'],
+            'branding_logo' => ['nullable', 'file', 'mimes:png,jpg,jpeg,webp,svg', 'max:4096'],
+            'branding_remove_logo' => ['nullable', 'boolean'],
+        ]);
+
+        $branding = TenantBranding::query()->firstOrNew([]);
+
+        if ($request->boolean('branding_remove_logo') && !empty($branding->logo_path)) {
+            Storage::disk('public')->delete((string) $branding->logo_path);
+            $branding->logo_path = null;
+        }
+
+        $uploadedFile = $request->file('branding_logo');
+        if ($uploadedFile instanceof UploadedFile) {
+            $tenantContext = function_exists('tenant') ? tenant() : null;
+            $tenantKeyRaw = (string) (
+                is_object($tenantContext) && method_exists($tenantContext, 'getTenantKey')
+                    ? $tenantContext->getTenantKey()
+                    : (is_object($tenantContext) ? ($tenantContext->id ?? 'default') : 'default')
+            );
+            $tenantKey = preg_replace('/[^A-Za-z0-9\-_]+/', '-', strtolower($tenantKeyRaw)) ?: 'default';
+            $extension = strtolower((string) $uploadedFile->getClientOriginalExtension());
+            $filename = 'logo-' . uniqid() . '.' . ($extension !== '' ? $extension : 'bin');
+            $relativePath = 'tenant-branding/' . $tenantKey . '/' . $filename;
+
+            $publicRoot = base_path('storage/app/public');
+            $brandingDir = $publicRoot . '/tenant-branding/' . $tenantKey;
+            if (!is_dir($brandingDir) && !mkdir($brandingDir, 0755, true) && !is_dir($brandingDir)) {
+                throw ValidationException::withMessages([
+                    'branding_logo' => 'No se pudo crear el directorio para guardar el logo.',
+                ]);
+            }
+
+            $content = file_get_contents($uploadedFile->getRealPath());
+            if ($content === false) {
+                throw ValidationException::withMessages([
+                    'branding_logo' => 'No se pudo leer el archivo del logo.',
+                ]);
+            }
+
+            $destination = $brandingDir . '/' . $filename;
+            $saved = file_put_contents($destination, $content);
+            if ($saved === false || !file_exists($destination)) {
+                throw ValidationException::withMessages([
+                    'branding_logo' => 'No se pudo guardar el archivo del logo.',
+                ]);
+            }
+
+            @chmod($destination, 0644);
+
+            if (!empty($branding->logo_path) && $branding->logo_path !== $relativePath) {
+                Storage::disk('public')->delete((string) $branding->logo_path);
+            }
+
+            $branding->logo_path = $relativePath;
+        }
+
+        $branding->company_name = trim((string) ($validated['branding_company_name'] ?? '')) ?: 'ITCity';
+        $branding->primary_color = strtoupper((string) $validated['branding_primary_color']);
+        $branding->secondary_color = strtoupper((string) $validated['branding_secondary_color']);
+        $branding->accent_color = strtoupper((string) $validated['branding_accent_color']);
+        $branding->background_color = strtoupper((string) $validated['branding_background_color']);
+        $branding->text_color = strtoupper((string) $validated['branding_text_color']);
+        $branding->save();
+
+        return redirect()
+            ->to(url('/admin/branding'))
+            ->with('status', 'Branding actualizado correctamente para este tenant.');
     }
 }

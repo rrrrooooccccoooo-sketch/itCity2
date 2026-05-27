@@ -100,6 +100,8 @@ Route::middleware([
         Route::post('/users/{user}/send-reset-link', [AdminController::class, 'sendPasswordResetLink'])->middleware('tenant.can:users.reset');
 
         Route::middleware('tenant.can:tenant.admin')->group(function () {
+            Route::get('/branding', [AdminController::class, 'showBrandingSettings']);
+            Route::post('/branding', [AdminController::class, 'saveBrandingSettings']);
             Route::get('/monitoring/agent-installer', [AdminController::class, 'downloadAgentInstaller']);
             Route::get('/monitoring/agent-installer-zip', [AdminController::class, 'downloadAgentInstallerZip']);
             Route::get('/monitoring/agent-installer-exe', [AdminController::class, 'downloadAgentInstallerExe']);

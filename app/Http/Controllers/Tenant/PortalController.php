@@ -11,10 +11,12 @@ use App\Models\NodeProbe;
 use App\Models\NodeRelation;
 use App\Models\NodeType;
 use App\Models\SoftwareSystem;
+use App\Models\TenantBranding;
 use App\Support\NodeConnectionSnapshot;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 use Throwable;
@@ -28,11 +30,29 @@ class PortalController extends Controller
             ->orderBy('name')
             ->get();
 
-        $tenantModel = tenant();
-        $tenantName = $tenantModel->company_name ?? data_get($tenantModel, 'data.company_name') ?? 'ITCity';
-        $tenantLogo = $tenantModel->logo_url ?? data_get($tenantModel, 'data.logo_url');
+        $branding = null;
+        if (Schema::hasTable('tenant_brandings')) {
+            $branding = TenantBranding::query()->first();
+        }
 
-        return view('tenant.city', compact('branches', 'tenantName', 'tenantLogo'));
+        $tenantModel = tenant();
+        $tenantName = trim((string) data_get($branding, 'company_name', ''))
+            ?: ($tenantModel->company_name ?? data_get($tenantModel, 'data.company_name') ?? 'ITCity');
+
+        $brandingLogoPath = (string) data_get($branding, 'logo_path', '');
+        $tenantLogo = $brandingLogoPath !== ''
+            ? url('/storage/' . ltrim($brandingLogoPath, '/'))
+            : ($tenantModel->logo_url ?? data_get($tenantModel, 'data.logo_url'));
+
+        $tenantColors = [
+            'primary' => strtoupper((string) data_get($branding, 'primary_color', '#2563EB')),
+            'secondary' => strtoupper((string) data_get($branding, 'secondary_color', '#0F172A')),
+            'accent' => strtoupper((string) data_get($branding, 'accent_color', '#38BDF8')),
+            'background' => strtoupper((string) data_get($branding, 'background_color', '#F1F5F9')),
+            'text' => strtoupper((string) data_get($branding, 'text_color', '#111827')),
+        ];
+
+        return view('tenant.city', compact('branches', 'tenantName', 'tenantLogo', 'tenantColors'));
     }
 
     public function branch(Request $request, Branch $branch): View

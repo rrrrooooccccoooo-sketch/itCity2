@@ -4,17 +4,33 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>@yield('title', 'ITCity') | ITCity</title>
+    @php
+        $tenantBranding = null;
+        if (\Illuminate\Support\Facades\Schema::hasTable('tenant_brandings')) {
+            $tenantBranding = \App\Models\TenantBranding::query()->first();
+        }
+        $brandCompanyName = trim((string) data_get($tenantBranding, 'company_name', '')) ?: 'ITCity';
+        $brandLogoPath = (string) data_get($tenantBranding, 'logo_path', '');
+        $brandLogoUrl = $brandLogoPath !== '' ? url('/storage/' . ltrim($brandLogoPath, '/')) : null;
+        $brandPrimaryColor = strtoupper((string) data_get($tenantBranding, 'primary_color', '#2563eb'));
+        $brandSecondaryColor = strtoupper((string) data_get($tenantBranding, 'secondary_color', '#0f172a'));
+        $brandAccentColor = strtoupper((string) data_get($tenantBranding, 'accent_color', '#38bdf8'));
+        $brandBackgroundColor = strtoupper((string) data_get($tenantBranding, 'background_color', '#f1f5f9'));
+        $brandTextColor = strtoupper((string) data_get($tenantBranding, 'text_color', '#111827'));
+    @endphp
+    <title>@yield('title', $brandCompanyName) | {{ $brandCompanyName }}</title>
     @vite(['resources/sass/app.scss', 'resources/js/app.js'])
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <style>
         :root {
             --sb-w: 238px;
             --tb-h: 58px;
-            --navy: #0f172a;
-            --navy2: #1e293b;
-            --accent: #2563eb;
-            --bg: #f1f5f9;
+            --navy: {{ $brandSecondaryColor }};
+            --navy2: {{ $brandSecondaryColor }};
+            --accent: {{ $brandPrimaryColor }};
+            --accent-2: {{ $brandAccentColor }};
+            --bg: {{ $brandBackgroundColor }};
+            --text-color: {{ $brandTextColor }};
         }
 
         * { box-sizing: border-box; }
@@ -23,6 +39,7 @@
             background: var(--bg);
             margin: 0;
             font-family: inherit;
+            color: var(--text-color);
         }
 
         /* ── Sidebar ───────────────────────────── */
@@ -53,6 +70,16 @@
             display: flex;
             align-items: center;
             gap: 11px;
+        }
+
+        .sb-logo-img {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            object-fit: contain;
+            background: #fff;
+            padding: 2px;
+            flex-shrink: 0;
         }
 
         .sb-logo .sb-dot {
@@ -493,8 +520,12 @@
 <aside id="ic-sidebar">
     <div class="sb-logo">
         <a href="{{ url('/') }}">
-            <span class="sb-dot">🏙</span>
-            <span>ITCity</span>
+            @if ($brandLogoUrl)
+                <img src="{{ $brandLogoUrl }}" alt="Logo {{ $brandCompanyName }}" class="sb-logo-img">
+            @else
+                <span class="sb-dot">🏙</span>
+            @endif
+            <span>{{ $brandCompanyName }}</span>
         </a>
     </div>
 
@@ -630,7 +661,7 @@
 
     <div style="flex:1"></div>
     <div style="padding:14px 20px;border-top:1px solid rgba(255,255,255,.07)">
-        <div style="font-size:.7rem;color:#475569;font-weight:600;letter-spacing:.04em">ITCITY PLATFORM</div>
+        <div style="font-size:.7rem;color:#475569;font-weight:600;letter-spacing:.04em">{{ strtoupper($brandCompanyName) }}</div>
         <div style="font-size:.68rem;color:#334155;">Tenant Management v1.0</div>
     </div>
 </aside>
@@ -641,7 +672,7 @@
         $topbarMainUrl = url('/');
     @endphp
     <div id="ic-topbar">
-        <div class="tb-title">@yield('page_title', 'ITCity')</div>
+        <div class="tb-title">@yield('page_title', $brandCompanyName)</div>
         <div class="d-flex gap-2 align-items-center">
             @auth
             <span class="tb-user-pill" title="Usuario logueado">
