@@ -302,7 +302,7 @@
         }
         .timeline-toolbar {
             display: flex;
-            justify-content: space-between;
+            justify-content: flex-start;
             align-items: center;
             gap: 12px;
             margin-bottom: 8px;
@@ -317,10 +317,7 @@
             font-size: 13px;
         }
         .timeline-main-grid {
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) minmax(320px, .48fr);
-            gap: 12px;
-            align-items: start;
+            display: block;
         }
         .timeline-track {
             position: relative;
@@ -448,6 +445,17 @@
             -webkit-box-orient: vertical;
             overflow: hidden;
         }
+        .timeline-event-type {
+            font-size: 11px;
+            font-weight: 600;
+            color: #475569;
+            margin-top: 2px;
+            min-height: 14px;
+            display: -webkit-box;
+            -webkit-line-clamp: 1;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
         .timeline-segment {
             height: 8px;
             margin-top: 8px;
@@ -509,58 +517,6 @@
         .timeline-preview-btn:focus {
             color: #1e40af;
             background: rgba(37, 99, 235, .08);
-            outline: none;
-        }
-        .timeline-inline-panel {
-            border: 1px solid #dbe4f0;
-            background: #f8fbff;
-            border-radius: 12px;
-            padding: 10px;
-            position: sticky;
-            top: 12px;
-            min-height: 120px;
-        }
-        .timeline-inline-panel-head {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 8px;
-            margin-bottom: 8px;
-            flex-wrap: wrap;
-        }
-        .timeline-inline-title {
-            font-size: 14px;
-            font-weight: 700;
-            color: #0f172a;
-        }
-        .timeline-inline-subtitle {
-            font-size: 12px;
-            color: #64748b;
-        }
-        .timeline-inline-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 6px 10px;
-            margin-bottom: 8px;
-        }
-        .timeline-inline-grid .entry-item {
-            font-size: 12px;
-        }
-        .timeline-inline-open {
-            border: 0;
-            background: transparent;
-            color: #1d4ed8;
-            font-weight: 700;
-            font-size: 12px;
-            cursor: pointer;
-            text-decoration: underline;
-            padding: 2px 4px;
-            border-radius: 6px;
-        }
-        .timeline-inline-open:hover,
-        .timeline-inline-open:focus {
-            background: rgba(37, 99, 235, .08);
-            color: #1e40af;
             outline: none;
         }
         .timeline-badges {
@@ -847,12 +803,7 @@
             }
 
             .timeline-main-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .timeline-inline-panel {
-                position: static;
-                margin-top: 8px;
+                display: block;
             }
         }
         @media (max-width: 768px) {
@@ -1006,6 +957,8 @@
             ];
         }
 
+        $timelineEvents = $graphEvents->reverse()->values();
+
         $maxCampusCount = max(1, (int) ($campusHistogram->max('count') ?? 0));
     @endphp
 
@@ -1048,88 +1001,19 @@
     </div>
 
     <div class="timeline-shell">
-        <div class="insights-grid">
-            <div class="route-card">
-                <div class="route-head">
-                    <div>
-                        <h2>Camino de vida del equipo</h2>
-                        <p>Cada bloque conecta el momento anterior con el siguiente para ver de un vistazo cómo se movió y quién lo recibió.</p>
-                    </div>
-                    <div class="histogram-foot">
-                        <span class="histogram-pill"><span class="histogram-dot" style="background:#10b981"></span> Etapa inicial</span>
-                        <span class="histogram-pill"><span class="histogram-dot" style="background:#f59e0b"></span> Movimiento</span>
-                        <span class="histogram-pill"><span class="histogram-dot" style="background:#ef4444"></span> Servicio / reparación</span>
-                    </div>
-                </div>
-
-                <div class="route-chain">
-                    @foreach ($routeSegments as $segment)
-                        <div
-                            class="route-step"
-                            tabindex="0"
-                            role="button"
-                            data-segment='@json($segment, JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE)'
-                        >
-                            <div class="route-step-title">
-                                <span class="route-step-badge" style="background: {{ $segment['color'] }};">{{ $segment['index'] }}</span>
-                                <h3>{{ $segment['label'] }}</h3>
-                            </div>
-                            <div class="route-campus">{{ $segment['from'] }} → {{ $segment['to'] }}</div>
-                            <div class="route-meta">
-                                <span><strong>Siguiente usuario:</strong> {{ $segment['user'] }}</span>
-                                <span><strong>Momento:</strong> {{ $segment['date'] }}</span>
-                                <span><strong>Hito:</strong> {{ $segment['reason'] }}</span>
-                            </div>
-                        </div>
-                    @endforeach
-                </div>
-            </div>
-
-            <div class="histogram-card">
-                <div class="histogram-head">
-                    <div>
-                        <h2>Histograma de sedes y movimientos</h2>
-                        <p>La barra más larga marca dónde se concentró más actividad y ayuda a leer la historia del equipo por etapa.</p>
-                    </div>
-                    <div class="histogram-foot">
-                        @foreach ($kindHistogram as $kindItem)
-                            <span class="histogram-pill">
-                                <span class="histogram-dot" style="background: {{ $kindItem['kind'] === 'origin' ? '#10b981' : ($kindItem['kind'] === 'transfer' ? '#f59e0b' : '#2563eb') }};"></span>
-                                {{ $kindItem['label'] }}: {{ $kindItem['count'] }}
-                            </span>
-                        @endforeach
-                    </div>
-                </div>
-
-                <div class="histogram-grid">
-                    @foreach ($campusHistogram as $campusItem)
-                        @php
-                            $width = (int) round(($campusItem['count'] / $maxCampusCount) * 100);
-                        @endphp
-                        <div class="histogram-row">
-                            <div class="histogram-label">{{ $campusItem['campus'] }}</div>
-                            <div class="histogram-track">
-                                <div class="histogram-fill" style="width: {{ $width }}%;"></div>
-                            </div>
-                            <div class="histogram-count">{{ $campusItem['count'] }}</div>
-                        </div>
-                    @endforeach
-                </div>
-            </div>
-        </div>
-
         <div class="timeline-toolbar">
             <div>
                 <h2>Línea de historia del equipo</h2>
-                <div class="timeline-note">Haz clic en un punto para ver su resumen y usa el enlace para abrir el modal completo.</div>
+                <div class="timeline-note">
+                    Origen: {{ $timelineEvents->first()['campus'] ?? 'N/A' }} · Estado actual: {{ optional($asset->branch)->name ?: 'N/A' }} · Haz clic en un punto para abrir el detalle completo.
+                </div>
             </div>
-            <div class="timeline-note">Origen: Andares · Paso por Tepic · Estado actual: Corporativo</div>
         </div>
 
         <div class="timeline-main-grid">
             <div class="timeline-track">
                 <div class="timeline-events">
-                    @foreach ($graphEvents as $event)
+                    @foreach ($timelineEvents as $event)
                         @php
                             $eventIcon = match ($event['kind']) {
                                 'purchase' => '🛒',
@@ -1159,23 +1043,13 @@
                                     </div>
                                     <div class="timeline-year">{{ $eventYear }}</div>
                                 </div>
-                                <div class="timeline-user">{{ $event['label'] }}</div>
+                                <div class="timeline-user">{{ $event['title'] ?: 'Sin asignar' }}</div>
+                                <div class="timeline-event-type">{{ $event['label'] }}</div>
                                 <div class="timeline-segment" aria-hidden="true"></div>
                             </div>
                         </div>
                     @endforeach
                 </div>
-            </div>
-
-            <div class="timeline-inline-panel hidden" id="timeline-inline-panel" aria-live="polite">
-                <div class="timeline-inline-panel-head">
-                    <div>
-                        <div class="timeline-inline-title" id="timeline-inline-title">Detalle rápido</div>
-                        <div class="timeline-inline-subtitle" id="timeline-inline-subtitle">Selecciona un evento del carril.</div>
-                    </div>
-                    <button type="button" class="timeline-inline-open" id="timeline-inline-open">Ver detalle completo</button>
-                </div>
-                <div class="timeline-inline-grid" id="timeline-inline-grid"></div>
             </div>
         </div>
     </div>
@@ -1265,12 +1139,6 @@
         const detailDate = document.getElementById('history-modal-date');
         const detailSections = document.getElementById('history-modal-sections');
         const closeButton = document.getElementById('history-modal-close');
-        const timelineInlinePanel = document.getElementById('timeline-inline-panel');
-        const timelineInlineTitle = document.getElementById('timeline-inline-title');
-        const timelineInlineSubtitle = document.getElementById('timeline-inline-subtitle');
-        const timelineInlineGrid = document.getElementById('timeline-inline-grid');
-        const timelineInlineOpen = document.getElementById('timeline-inline-open');
-        let selectedTimelineEvent = null;
 
         const sectionMap = [
             {
@@ -1345,74 +1213,22 @@
             });
         };
 
-        const renderInlineTimeline = (event) => {
-            timelineInlinePanel.classList.remove('hidden');
-            timelineInlineTitle.textContent = `${event.label || 'Evento'} · ${event.date || ''}`;
-            timelineInlineSubtitle.textContent = `${event.campus || 'Sin campus'} · ${event.title || 'Sin usuario'}`;
-            timelineInlineGrid.innerHTML = [
-                ['Usuario', event.title],
-                ['Campus', event.campus],
-                ['Capturó', event.by],
-                ['Recibe', event.received_by],
-                ['Motivo', event.reason],
-                ['Folio', event.invoice_folio],
-            ].map(([label, value]) => `<div class="entry-item"><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value || '—')}</div>`).join('');
-        };
-
         document.querySelectorAll('.timeline-node').forEach((button) => {
             button.addEventListener('click', () => {
                 const event = JSON.parse(button.dataset.event || '{}');
-                selectedTimelineEvent = event;
                 collapseTimelineSelection();
                 button.classList.add('is-expanded');
-                renderInlineTimeline(event);
+                renderDetail(
+                    event,
+                    event.title || 'Detalle del evento',
+                    `${event.label || 'evento'} · ${event.campus || 'Sin campus'}`
+                );
             });
 
             button.addEventListener('keydown', (event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault();
                     button.click();
-                }
-            });
-        });
-
-        timelineInlineOpen.addEventListener('click', () => {
-            if (!selectedTimelineEvent) return;
-            renderDetail(
-                selectedTimelineEvent,
-                selectedTimelineEvent.title || 'Detalle del evento',
-                `${selectedTimelineEvent.kind || 'evento'} · ${selectedTimelineEvent.campus || 'Sin campus'}`
-            );
-        });
-
-        document.querySelectorAll('.route-step').forEach((step) => {
-            const openStep = () => {
-                const segment = JSON.parse(step.dataset.segment || '{}');
-                renderDetail(
-                    {
-                        date: segment.date || '',
-                        label: segment.label || 'Etapa del camino',
-                        campus: `${segment.from || 'N/A'} → ${segment.to || 'N/A'}`,
-                        title: segment.user || 'Sin usuario',
-                        by: segment.by || 'Sistema',
-                        received_by: segment.received_by || 'N/A',
-                        serial_number: segment.serial_number || '—',
-                        invoice_folio: segment.invoice_folio || '—',
-                        reason: segment.reason || 'Sin motivo capturado',
-                        transfer: segment.kind === 'transfer' ? 'Movimiento intersede' : (segment.kind === 'repair' || segment.kind === 'repair_return' ? 'Servicio técnico' : 'Asignación / uso'),
-                        supplier: segment.kind === 'repair' || segment.kind === 'repair_return' ? 'Mantenimiento interno' : '—',
-                        description: segment.label || '—',
-                    },
-                    `${segment.label || 'Etapa'} · ${segment.from || 'N/A'} → ${segment.to || 'N/A'}`,
-                    `Camino ${segment.index || ''} · ${segment.kind || 'evento'}`
-                );
-            };
-
-            step.addEventListener('click', openStep);
-            step.addEventListener('keydown', (event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault();
-                    openStep();
                 }
             });
         });
