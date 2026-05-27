@@ -11,6 +11,8 @@ use App\Models\ComputerAssetTransferRequest;
 use App\Models\ComputerAssetMetric;
 use App\Models\EquipmentBrand;
 use App\Models\EquipmentModel;
+use App\Models\InvoiceVendorProfile;
+use App\Models\InvoiceVendorProfileAudit;
 use App\Models\FloorPlan;
 use App\Models\Node;
 use App\Models\NodeObservedDevice;
@@ -27,13 +29,17 @@ use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
+use Smalot\PdfParser\Parser as PdfParser;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
 use Symfony\Component\Process\Process;
 
@@ -42,7 +48,7 @@ class AdminController extends Controller
     private const BLANK_PLAN_GRID_PX = 25;
     private const MONITORING_ONLINE_WINDOW_MINUTES = 10;
 
-    public function dashboardPanel1(Request $request): View
+    public function dashboardPanel1(Request $request): View|RedirectResponse
     {
         if ($redirect = $this->canonicalizeAdminUrl($request, '/admin/panel-admin-1')) {
             return $redirect;
@@ -54,7 +60,7 @@ class AdminController extends Controller
         return view('tenant.admin.dashboard-panel-1', $data);
     }
 
-    public function dashboardPanel2(Request $request): View
+    public function dashboardPanel2(Request $request): View|RedirectResponse
     {
         if ($redirect = $this->canonicalizeAdminUrl($request, '/admin/panel-admin-2')) {
             return $redirect;
@@ -66,7 +72,7 @@ class AdminController extends Controller
         return view('tenant.admin.dashboard-panel-2', $data);
     }
 
-    public function dashboardPanel3(Request $request): View
+    public function dashboardPanel3(Request $request): View|RedirectResponse
     {
         if ($redirect = $this->canonicalizeAdminUrl($request, '/admin/panel-admin-3')) {
             return $redirect;
@@ -78,7 +84,7 @@ class AdminController extends Controller
         return view('tenant.admin.dashboard-panel-3', $data);
     }
 
-    public function dashboardLegacy(Request $request): View
+    public function dashboardLegacy(Request $request): View|RedirectResponse
     {
         if ($redirect = $this->canonicalizeAdminUrl($request, '/admin/panel-admin-legacy')) {
             return $redirect;
@@ -90,7 +96,7 @@ class AdminController extends Controller
         return view('tenant.admin.dashboard', $data);
     }
 
-    public function dashboard(Request $request): View
+    public function dashboard(Request $request): View|RedirectResponse
     {
         if ($redirect = $this->canonicalizeAdminUrl($request, '/admin')) {
             return $redirect;
@@ -1087,6 +1093,11 @@ class AdminController extends Controller
 
         $query = $request->query();
         $query['branch_id'] = $resolvedBranchId;
+
+        if ($request->hasSession()) {
+            // Keep flash payload (status/errors/drafts) when URL canonicalization adds branch_id.
+            $request->session()->reflash();
+        }
 
         return redirect()->to($path . '?' . http_build_query($query));
     }
@@ -2782,7 +2793,7 @@ SVG;
 
         if ($transferRequest->status !== 'pending') {
             return redirect()
-                ->to('/admin#section-assets')
+                ->to($this->adminBaseUrlWithContext($request) . '#section-assets')
                 ->with('status', 'La solicitud ya fue atendida previamente.');
         }
 
@@ -2808,7 +2819,7 @@ SVG;
 
         if ($decision !== 'accepted') {
             return redirect()
-                ->to('/admin#section-assets')
+                ->to($this->adminBaseUrlWithContext($request) . '#section-assets')
                 ->with('status', 'Solicitud de traslado rechazada.');
         }
 
@@ -2875,6 +2886,1599 @@ SVG;
         $computerAsset->delete();
 
         return $this->redirectToCrud('crud-assets', 'Activo TI eliminado correctamente.');
+    }
+
+    public function downloadComputerAssetImportTemplate(Request $request)
+    {
+        $headers = [
+            'sede_id',
+            'tipo_equipo',
+            'etiqueta',
+            'hostname',
+            'numero_serie',
+            'marca',
+            'modelo',
+            'procesador',
+            'ram_gb',
+            'tipo_almacenamiento',
+            'almacenamiento_gb',
+            'sistema_operativo',
+            'version_office',
+            'numero_orden_compra',
+            'proveedor',
+            'fecha_compra',
+            'garantia_hasta',
+            'observaciones',
+        ];
+
+        return response()->streamDownload(function () use ($request, $headers): void {
+            $output = fopen('php://output', 'wb');
+            if ($output === false) {
+                return;
+            }
+
+            fputcsv($output, $headers);
+
+            $scopeIds = $this->currentUserBranchScopeIds($request);
+            $sampleBranchId = Branch::query()
+                ->when($scopeIds !== null, fn (Builder $query) => $query->whereIn('id', $scopeIds))
+                ->orderBy('name')
+                ->value('id');
+
+            fputcsv($output, [
+                $sampleBranchId ?? '',
+                'desktop',
+                'INV-0001',
+                'pc-demo-01',
+                'SN-0001',
+                'Dell',
+                'OptiPlex 7010',
+                'Intel Core i5',
+                16,
+                'ssd',
+                512,
+                'Windows 11 Pro',
+                'Microsoft 365 Apps',
+                'OC-2026-001',
+                'Proveedor de ejemplo',
+                now()->toDateString(),
+                now()->addYear()->toDateString(),
+                'Alta por layout de ejemplo',
+            ]);
+
+            fclose($output);
+        }, 'plantilla-activos-ti.csv', [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
+    }
+
+    public function importComputerAssets(Request $request): RedirectResponse
+    {
+        $validated = $request->validate([
+            'asset_import_branch_id' => ['nullable', 'exists:branches,id'],
+            'asset_import_file' => ['required', 'file', 'max:10240', 'mimes:csv,txt'],
+        ]);
+
+        $defaultBranchId = isset($validated['asset_import_branch_id']) ? (int) $validated['asset_import_branch_id'] : null;
+        $file = $request->file('asset_import_file');
+        if (!$file) {
+            throw ValidationException::withMessages([
+                'asset_import_file' => 'Debes seleccionar un archivo CSV.',
+            ]);
+        }
+
+        $filePath = $file->getRealPath();
+        if (!$filePath || !is_file($filePath)) {
+            throw ValidationException::withMessages([
+                'asset_import_file' => 'No fue posible leer el archivo cargado.',
+            ]);
+        }
+
+        $handle = fopen($filePath, 'rb');
+        if ($handle === false) {
+            throw ValidationException::withMessages([
+                'asset_import_file' => 'No fue posible abrir el archivo cargado.',
+            ]);
+        }
+
+        $delimiter = $this->detectCsvDelimiter((string) (fgets($handle) ?: ''));
+        rewind($handle);
+
+        $headerRow = fgetcsv($handle, 0, $delimiter);
+        if (!is_array($headerRow) || $headerRow === []) {
+            fclose($handle);
+
+            throw ValidationException::withMessages([
+                'asset_import_file' => 'El CSV debe incluir una fila de encabezados.',
+            ]);
+        }
+
+        $headers = array_map(fn ($header) => $this->normalizeImportHeader((string) $header), $headerRow);
+        $created = 0;
+        $skipped = 0;
+        $errors = [];
+        $scopeIds = $this->currentUserBranchScopeIds($request);
+
+        DB::transaction(function () use ($handle, $delimiter, $headers, $defaultBranchId, $scopeIds, &$created, &$skipped, &$errors): void {
+            $lineNumber = 1;
+
+            while (($row = fgetcsv($handle, 0, $delimiter)) !== false) {
+                $lineNumber += 1;
+
+                if ($row === [null] || $row === [] || $this->importCsvRowIsEmpty($row)) {
+                    $skipped += 1;
+                    continue;
+                }
+
+                $data = $this->combineImportCsvRow($headers, $row);
+                $branchId = $this->parseImportInteger($data['branch_id'] ?? null) ?? $defaultBranchId;
+                if ($branchId === null) {
+                    $errors[] = 'Fila ' . $lineNumber . ': falta branch_id y no se seleccionó una sede por defecto.';
+                    continue;
+                }
+
+                if ($scopeIds !== null && !in_array($branchId, $scopeIds, true)) {
+                    $errors[] = 'Fila ' . $lineNumber . ': la sede indicada no pertenece al alcance actual.';
+                    continue;
+                }
+
+                if (!Branch::query()->whereKey($branchId)->exists()) {
+                    $errors[] = 'Fila ' . $lineNumber . ': la sede indicada no existe.';
+                    continue;
+                }
+
+                $equipmentType = trim((string) ($data['equipment_type'] ?? 'desktop'));
+                if ($equipmentType === '') {
+                    $equipmentType = 'desktop';
+                }
+
+                if (!array_key_exists($equipmentType, ComputerAsset::equipmentTypeOptions())) {
+                    $errors[] = 'Fila ' . $lineNumber . ': tipo de equipo inválido.';
+                    continue;
+                }
+
+                $purchaseOrderNumber = $this->normalizeImportText($data['purchase_order_number'] ?? null);
+                $supplier = $this->normalizeImportText($data['supplier'] ?? null);
+                $purchaseDate = $this->normalizeImportDate($data['purchase_date'] ?? null);
+                $warrantyExpiresAt = $this->normalizeImportDate($data['warranty_expires_at'] ?? null);
+                $statusOptions = ComputerAsset::statusOptions();
+                $pendingStatus = array_key_exists('pending_assignment', $statusOptions)
+                    ? 'pending_assignment'
+                    : (array_key_exists('stock', $statusOptions) ? 'stock' : array_key_first($statusOptions));
+
+                $details = [];
+                if ($purchaseOrderNumber !== '' || $supplier !== '') {
+                    data_set($details, 'procurement.purchase_order_number', $purchaseOrderNumber !== '' ? $purchaseOrderNumber : null);
+                    data_set($details, 'procurement.supplier', $supplier !== '' ? $supplier : null);
+                }
+
+                data_set($details, 'import.source', 'csv_layout');
+                data_set($details, 'import.imported_at', now()->toIso8601String());
+
+                ComputerAsset::query()->create([
+                    'branch_id' => $branchId,
+                    'equipment_type' => $equipmentType,
+                    'asset_tag' => $this->normalizeImportText($data['asset_tag'] ?? null),
+                    'hostname' => $this->normalizeImportText($data['hostname'] ?? null),
+                    'serial_number' => $this->normalizeImportText($data['serial_number'] ?? null),
+                    'brand' => $this->normalizeImportText($data['brand'] ?? null),
+                    'model' => $this->normalizeImportText($data['model'] ?? null),
+                    'cpu' => $this->normalizeImportText($data['cpu'] ?? null),
+                    'ram_gb' => $this->parseImportInteger($data['ram_gb'] ?? null),
+                    'storage_type' => $this->normalizeImportText($data['storage_type'] ?? null),
+                    'storage_gb' => $this->parseImportInteger($data['storage_gb'] ?? null),
+                    'operating_system' => $this->normalizeImportText($data['operating_system'] ?? null),
+                    'office_version' => $this->normalizeImportText($data['office_version'] ?? null),
+                    'purchase_date' => $purchaseDate,
+                    'warranty_expires_at' => $warrantyExpiresAt,
+                    'status' => $pendingStatus,
+                    'notes' => $this->normalizeImportText($data['notes'] ?? null),
+                    'details' => $details,
+                ]);
+
+                $created += 1;
+            }
+        });
+
+        fclose($handle);
+
+        $message = sprintf('Importación finalizada. Creados: %d, omitidos: %d.', $created, $skipped);
+        if (!empty($errors)) {
+            $message .= ' ' . implode(' ', array_slice($errors, 0, 5));
+        }
+
+        return redirect()
+            ->to($this->adminBaseUrlWithContext($request) . '#section-assets')
+            ->with('status', $message);
+    }
+
+    public function analyzeComputerAssetInvoice(Request $request): RedirectResponse
+    {
+        $validated = $request->validate([
+            'asset_invoice_branch_id' => ['nullable', 'exists:branches,id'],
+            'asset_invoice_file' => ['required', 'file', 'max:10240', 'mimes:pdf,txt'],
+        ]);
+
+        $file = $request->file('asset_invoice_file');
+        if (!$file instanceof UploadedFile) {
+            throw ValidationException::withMessages([
+                'asset_invoice_file' => 'Debes seleccionar un archivo de factura (PDF o TXT).',
+            ]);
+        }
+
+        $rawText = $this->extractInvoiceRawText($file);
+        if (trim($rawText) === '') {
+            throw ValidationException::withMessages([
+                'asset_invoice_file' => 'No fue posible extraer texto de la factura. Verifica que el PDF tenga texto seleccionable.',
+            ]);
+        }
+
+        $defaultBranchId = isset($validated['asset_invoice_branch_id']) ? (int) $validated['asset_invoice_branch_id'] : null;
+        $draft = $this->buildInvoiceAssetDraft($rawText, $defaultBranchId);
+        $draft['file_name'] = $file->getClientOriginalName();
+        $draft['analyzed_at'] = now()->toIso8601String();
+
+        return redirect()
+            ->to($this->adminBaseUrlWithContext($request) . '#section-assets')
+            ->with('status', 'Factura analizada. Revisa la propuesta antes de importar.')
+            ->with('assetInvoiceAutoOpenDraft', true)
+            ->with('assetInvoiceDraft', $draft);
+    }
+
+    public function importComputerAssetsFromInvoiceDraft(Request $request): RedirectResponse
+    {
+        $validated = $request->validate([
+            'asset_invoice_branch_id' => ['nullable', 'exists:branches,id'],
+            'asset_invoice_payload' => ['required', 'string'],
+        ]);
+
+        $payload = json_decode((string) $validated['asset_invoice_payload'], true);
+        if (!is_array($payload)) {
+            throw ValidationException::withMessages([
+                'asset_invoice_payload' => 'La propuesta de factura no es válida.',
+            ]);
+        }
+
+        $items = collect(data_get($payload, 'items', []))
+            ->filter(fn ($item) => is_array($item))
+            ->values();
+
+        if ($items->isEmpty()) {
+            throw ValidationException::withMessages([
+                'asset_invoice_payload' => 'La propuesta no contiene activos para importar.',
+            ]);
+        }
+
+        $scopeIds = $this->currentUserBranchScopeIds($request);
+        $overrideBranchId = isset($validated['asset_invoice_branch_id']) ? (int) $validated['asset_invoice_branch_id'] : null;
+        $statusOptions = ComputerAsset::statusOptions();
+        $pendingStatus = array_key_exists('pending_assignment', $statusOptions)
+            ? 'pending_assignment'
+            : (array_key_exists('stock', $statusOptions) ? 'stock' : array_key_first($statusOptions));
+
+        $shared = [
+            'invoice_folio' => trim((string) data_get($payload, 'invoice_folio', '')),
+            'purchase_order_number' => trim((string) data_get($payload, 'purchase_order_number', '')),
+            'supplier' => trim((string) data_get($payload, 'supplier', '')),
+            'invoice_date' => trim((string) data_get($payload, 'invoice_date', '')),
+            'source_file_name' => trim((string) data_get($payload, 'file_name', '')),
+        ];
+
+        $created = 0;
+        $errors = [];
+        $learnedItems = [];
+        DB::transaction(function () use ($items, $overrideBranchId, $scopeIds, $pendingStatus, $shared, &$created, &$errors, &$learnedItems): void {
+            foreach ($items as $index => $item) {
+                $line = $index + 1;
+                $itemBranchId = $overrideBranchId ?? (int) data_get($item, 'branch_id', 0);
+
+                if ($itemBranchId <= 0) {
+                    $errors[] = 'Elemento ' . $line . ': falta sede.';
+                    continue;
+                }
+
+                if ($scopeIds !== null && !in_array($itemBranchId, $scopeIds, true)) {
+                    $errors[] = 'Elemento ' . $line . ': la sede no pertenece al alcance actual.';
+                    continue;
+                }
+
+                if (!Branch::query()->whereKey($itemBranchId)->exists()) {
+                    $errors[] = 'Elemento ' . $line . ': la sede no existe.';
+                    continue;
+                }
+
+                $equipmentType = trim((string) data_get($item, 'equipment_type', 'desktop'));
+                if ($equipmentType === '' || !array_key_exists($equipmentType, ComputerAsset::equipmentTypeOptions())) {
+                    $equipmentType = 'desktop';
+                }
+
+                $itemPurchaseOrder = trim((string) data_get($item, 'purchase_order_number', ''));
+                $itemSupplier = trim((string) data_get($item, 'supplier', ''));
+                $itemInvoiceFolio = trim((string) data_get($item, 'invoice_folio', ''));
+
+                $details = [];
+                data_set($details, 'procurement.purchase_order_number', $itemPurchaseOrder !== '' ? $itemPurchaseOrder : ($shared['purchase_order_number'] !== '' ? $shared['purchase_order_number'] : null));
+                data_set($details, 'procurement.supplier', $itemSupplier !== '' ? $itemSupplier : ($shared['supplier'] !== '' ? $shared['supplier'] : null));
+                data_set($details, 'procurement.invoice_folio', $itemInvoiceFolio !== '' ? $itemInvoiceFolio : ($shared['invoice_folio'] !== '' ? $shared['invoice_folio'] : null));
+                data_set($details, 'procurement.invoice_date', $shared['invoice_date'] !== '' ? $shared['invoice_date'] : null);
+                data_set($details, 'import.source', 'invoice_ai_mvp');
+                data_set($details, 'import.imported_at', now()->toIso8601String());
+                data_set($details, 'import.raw_description', data_get($item, 'description'));
+                data_set($details, 'import.confidence', data_get($item, 'confidence'));
+                data_set($details, 'import.source_file_name', $shared['source_file_name'] !== '' ? $shared['source_file_name'] : null);
+
+                ComputerAsset::query()->create([
+                    'branch_id' => $itemBranchId,
+                    'equipment_type' => $equipmentType,
+                    'asset_tag' => $this->normalizeImportText(data_get($item, 'asset_tag')),
+                    'hostname' => $this->normalizeImportText(data_get($item, 'hostname')),
+                    'serial_number' => $this->normalizeImportText(data_get($item, 'serial_number')),
+                    'brand' => $this->normalizeImportText(data_get($item, 'brand')),
+                    'model' => $this->normalizeImportText(data_get($item, 'model')),
+                    'cpu' => null,
+                    'ram_gb' => null,
+                    'storage_type' => null,
+                    'storage_gb' => null,
+                    'operating_system' => null,
+                    'office_version' => null,
+                    'purchase_date' => $this->normalizeImportDate($shared['invoice_date']),
+                    'warranty_expires_at' => null,
+                    'status' => $pendingStatus,
+                    'notes' => $this->normalizeImportText(data_get($item, 'notes')),
+                    'details' => $details,
+                ]);
+
+                $created += 1;
+                $learnedItems[] = [
+                    'supplier' => $itemSupplier !== '' ? $itemSupplier : $shared['supplier'],
+                    'brand' => $this->normalizeImportText(data_get($item, 'brand')),
+                    'model' => $this->normalizeImportText(data_get($item, 'model')),
+                    'serial_number' => $this->normalizeImportText(data_get($item, 'serial_number')),
+                ];
+            }
+        });
+
+        if ($created > 0) {
+            $this->learnInvoiceVendorProfile($payload, $learnedItems, $request->user());
+        }
+
+        $status = 'Importación de factura finalizada. Creados: ' . $created . '.';
+        if (!empty($errors)) {
+            $status .= ' ' . implode(' ', array_slice($errors, 0, 5));
+        }
+
+        return redirect()
+            ->to($this->adminBaseUrlWithContext($request) . '#section-assets')
+            ->with('status', $status);
+    }
+
+    public function resetInvoiceVendorProfile(Request $request): RedirectResponse
+    {
+        $validated = $request->validate([
+            'asset_invoice_supplier_name' => ['required', 'string', 'max:190'],
+        ]);
+
+        $supplier = trim((string) $validated['asset_invoice_supplier_name']);
+        $supplierKey = $this->supplierKey($supplier);
+
+        if ($supplierKey === '') {
+            return redirect()
+                ->to($this->adminBaseUrlWithContext($request) . '#section-assets')
+                ->with('status', 'No se pudo identificar el proveedor para limpiar su perfil.');
+        }
+
+        $profile = InvoiceVendorProfile::query()->where('supplier_key', $supplierKey)->first();
+
+        if ($profile) {
+            $this->registerInvoiceVendorProfileAudit(
+                action: 'reset',
+                supplierKey: $supplierKey,
+                supplierName: $profile->supplier_name,
+                profileId: (int) $profile->id,
+                changedByUserId: $request->user()?->id,
+                changedByName: (string) ($request->user()?->name ?? 'Sistema'),
+                context: [
+                    'known_brands' => $profile->known_brands ?? [],
+                    'known_models' => $profile->known_models ?? [],
+                    'serial_prefixes' => $profile->serial_prefixes ?? [],
+                    'last_used_at' => optional($profile->last_used_at)->toIso8601String(),
+                ]
+            );
+
+            $profile->delete();
+        }
+
+        return redirect()
+            ->to($this->adminBaseUrlWithContext($request) . '#section-assets')
+            ->with('status', 'Perfil aprendido del proveedor reiniciado correctamente.');
+    }
+
+    private function extractInvoiceRawText(UploadedFile $file): string
+    {
+        $extension = strtolower((string) $file->getClientOriginalExtension());
+        $path = $file->getRealPath();
+        if (!$path || !is_file($path)) {
+            return '';
+        }
+
+        if ($extension === 'txt') {
+            return (string) file_get_contents($path);
+        }
+
+        if ($extension !== 'pdf') {
+            return '';
+        }
+
+        $parsedText = '';
+        try {
+            $parser = new PdfParser();
+            $pdf = $parser->parseFile($path);
+
+            $parsedText = (string) $pdf->getText();
+        } catch (\Throwable $exception) {
+            $parsedText = '';
+        }
+
+        $fallbackText = '';
+        try {
+            // Optional fallback for PDFs whose text layer is hard for pdfparser.
+            $process = new Process(['pdftotext', '-layout', '-enc', 'UTF-8', $path, '-']);
+            $process->setTimeout(20);
+            $process->run();
+            if ($process->isSuccessful()) {
+                $fallbackText = (string) $process->getOutput();
+            }
+        } catch (\Throwable $exception) {
+            $fallbackText = '';
+        }
+
+        $bestText = strlen(trim($fallbackText)) > strlen(trim($parsedText))
+            ? $fallbackText
+            : $parsedText;
+
+        return $this->normalizeInvoiceExtractedText($bestText);
+    }
+
+    private function normalizeInvoiceExtractedText(string $text): string
+    {
+        $normalized = str_replace(["\r\n", "\r"], "\n", $text);
+        $normalized = preg_replace('/[\x{00A0}\x{2007}\x{202F}]/u', ' ', (string) $normalized);
+        $normalized = preg_replace('/[ \t]+/u', ' ', (string) $normalized);
+        $normalized = preg_replace('/\n{3,}/', "\n\n", (string) $normalized);
+
+        return is_string($normalized) ? trim($normalized) : trim($text);
+    }
+
+    private function buildInvoiceAssetDraft(string $rawText, ?int $defaultBranchId): array
+    {
+        $cleanText = preg_replace('/\r\n?/', "\n", $rawText);
+        $cleanText = is_string($cleanText) ? $cleanText : $rawText;
+        $lines = collect(explode("\n", $cleanText))
+            ->map(fn ($line) => trim((string) $line))
+            ->filter(fn ($line) => $line !== '')
+            ->values();
+
+        $supplier = $this->extractFirstMatch($cleanText, [
+            '/(?:proveedor|emisor|raz[oó]n social|nombre comercial)\s*[:\-]\s*([^\n]+)/iu',
+        ]);
+        if ($supplier === '') {
+            $supplier = trim((string) ($lines->first() ?? ''));
+        }
+
+        $supplierKey = $this->supplierKey($supplier);
+        $vendorProfile = $this->resolveInvoiceVendorProfile($supplier);
+        $profileAudits = $supplierKey !== '' && $this->invoiceVendorProfileAuditsTableAvailable()
+            ? InvoiceVendorProfileAudit::query()
+                ->where('supplier_key', $supplierKey)
+                ->latest('id')
+                ->limit(6)
+                ->get()
+            : collect();
+        $knownBrands = collect(data_get($vendorProfile, 'known_brands', []))
+            ->filter(fn ($value) => is_string($value) && trim($value) !== '')
+            ->map(fn ($value) => trim((string) $value))
+            ->values()
+            ->all();
+        $knownModels = collect(data_get($vendorProfile, 'known_models', []))
+            ->filter(fn ($value) => is_string($value) && trim((string) $value) !== '')
+            ->map(fn ($value) => trim((string) $value))
+            ->values()
+            ->all();
+        $knownSerialPrefixes = collect(data_get($vendorProfile, 'serial_prefixes', []))
+            ->filter(fn ($value) => is_string($value) && trim($value) !== '')
+            ->map(fn ($value) => strtoupper(trim((string) $value)))
+            ->values()
+            ->all();
+
+        $invoiceFolio = $this->extractFirstMatch($cleanText, [
+            '/(?:folio fiscal|folio factura|folio|factura(?:\s*no\.?|\s*#)?)\s*[:#\-]?\s*([A-Z0-9\-]{4,})/iu',
+            '/\b(UUID)\s*[:\-]?\s*([A-F0-9\-]{12,})/iu',
+        ]);
+
+        $purchaseOrder = $this->extractFirstMatch($cleanText, [
+            '/(?:orden\s*de\s*compra|oc)\s*[:#\-]?\s*([A-Z0-9\-\/]{3,})/iu',
+        ]);
+
+        $invoiceDate = $this->extractFirstMatch($cleanText, [
+            '/(?:fecha(?:\s*de\s*emisi[oó]n)?|fecha factura)\s*[:\-]?\s*([0-9]{1,2}[\/\-][0-9]{1,2}[\/\-][0-9]{2,4})/iu',
+            '/(?:fecha(?:\s*de\s*emisi[oó]n)?|fecha factura)\s*[:\-]?\s*([0-9]{4}[\/\-][0-9]{1,2}[\/\-][0-9]{1,2})/iu',
+        ]);
+
+        $serialMatches = [];
+        preg_match_all('/(?:S\/?N|SERIE|SERIES|SERIAL)\s*[:#\-]?\s*([A-Z0-9\-]{5,})/iu', $cleanText, $serialMatches);
+        $inlineMarkerSerials = collect($serialMatches[1] ?? [])->map(fn ($value) => strtoupper(trim((string) $value)))->unique()->values();
+        $markerBlockSerials = $this->extractInvoiceSerialTokensFromMarkerBlocks($lines, $knownSerialPrefixes);
+        $serials = $markerBlockSerials->merge($inlineMarkerSerials)->unique()->values();
+
+        $candidateLines = $lines
+            ->filter(function (string $line) use ($knownBrands, $knownModels): bool {
+                $normalized = Str::lower($line);
+                if (preg_match('/\b(laptop|notebook|desktop|pc|workstation|servidor|monitor|all\s*in\s*one|aio|latitude|thinkpad|optiplex|probook|elitebook|vostro|inspiron|prodesk|zbook|ideapad|macbook|vivobook)\b/iu', $line) === 1) {
+                    return true;
+                }
+
+                $brandHit = collect($knownBrands)
+                    ->contains(fn ($brand) => str_contains($normalized, Str::lower(trim((string) $brand))));
+                if ($brandHit) {
+                    return true;
+                }
+
+                return collect($knownModels)
+                    ->contains(fn ($model) => str_contains($normalized, Str::lower(trim((string) $model))));
+            })
+            ->values();
+
+        $inferredFallbackDescription = $this->inferInvoiceFallbackDescription($lines, $knownBrands, $knownModels);
+
+        $items = collect();
+        $nameColumnItems = $this->extractInvoiceItemsFromNombreColumn($lines, $defaultBranchId, $supplier, $purchaseOrder, $invoiceFolio, $knownBrands, $knownSerialPrefixes);
+
+        if ($nameColumnItems->isNotEmpty()) {
+            $items = $nameColumnItems;
+        }
+
+        if ($items->isEmpty() && $serials->isNotEmpty()) {
+            $items = $serials->map(function (string $serial, int $index) use ($candidateLines, $inferredFallbackDescription, $defaultBranchId, $supplier, $purchaseOrder, $invoiceFolio, $knownBrands) {
+                $line = (string) ($candidateLines->get($index) ?? $candidateLines->first() ?? $inferredFallbackDescription);
+                return $this->buildInvoiceDraftItem($line, $serial, $defaultBranchId, $supplier, $purchaseOrder, $invoiceFolio, 0.86, $knownBrands);
+            });
+        } elseif ($items->isEmpty() && $candidateLines->isNotEmpty()) {
+            $items = $candidateLines
+                ->take(50)
+                ->map(fn (string $line) => $this->buildInvoiceDraftItem($line, null, $defaultBranchId, $supplier, $purchaseOrder, $invoiceFolio, 0.62, $knownBrands));
+        }
+
+        if ($items->isEmpty()) {
+            $fallbackDescription = trim((string) ($candidateLines->first() ?? $inferredFallbackDescription));
+            $items = collect([
+                $this->buildInvoiceDraftItem($fallbackDescription, null, $defaultBranchId, $supplier, $purchaseOrder, $invoiceFolio, 0.35, $knownBrands),
+            ]);
+        }
+
+        return [
+            'supplier' => $supplier,
+            'invoice_folio' => $invoiceFolio,
+            'purchase_order_number' => $purchaseOrder,
+            'invoice_date' => $this->normalizeImportDate($invoiceDate),
+            'profile_matched' => $vendorProfile !== null,
+            'supplier_profile' => [
+                'known_brands' => collect(data_get($vendorProfile, 'known_brands', []))->values()->all(),
+                'known_models' => collect(data_get($vendorProfile, 'known_models', []))->values()->all(),
+                'serial_prefixes' => collect(data_get($vendorProfile, 'serial_prefixes', []))->values()->all(),
+                'last_used_at' => optional(data_get($vendorProfile, 'last_used_at'))->toIso8601String(),
+                'audits' => $profileAudits->map(fn (InvoiceVendorProfileAudit $audit) => [
+                    'action' => $audit->action,
+                    'changed_by_name' => $audit->changed_by_name,
+                    'changed_by_user_id' => $audit->changed_by_user_id,
+                    'created_at' => optional($audit->created_at)->toIso8601String(),
+                ])->values()->all(),
+            ],
+            'raw_excerpt' => Str::limit($cleanText, 1200),
+            'items' => $items->values()->all(),
+        ];
+    }
+
+    private function extractInvoiceItemsFromNombreColumn(
+        \Illuminate\Support\Collection $lines,
+        ?int $defaultBranchId,
+        string $supplier,
+        string $purchaseOrder,
+        string $invoiceFolio,
+        array $preferredBrands = [],
+        array $knownSerialPrefixes = []
+    ): \Illuminate\Support\Collection {
+        $normalizedLines = $lines
+            ->map(fn ($line) => trim((string) preg_replace('/\s+/', ' ', (string) $line)))
+            ->filter(fn ($line) => $line !== '')
+            ->values();
+
+        $headerIndex = $normalizedLines->search(function (string $line): bool {
+            return preg_match('/\bnombre\b/i', $line) === 1;
+        });
+
+        $scanLines = $headerIndex === false
+            ? $normalizedLines
+            : $normalizedLines->slice((int) $headerIndex + 1)->values();
+
+        $stopPattern = '/\b(subtotal|iva|total|importe|neto|resumen|observaciones|condiciones)\b/i';
+        $items = collect();
+        $pendingSerialContext = null;
+
+        foreach ($scanLines as $line) {
+            if (preg_match($stopPattern, $line) === 1) {
+                break;
+            }
+
+            if ($pendingSerialContext !== null) {
+                $continuationSerials = $this->extractInvoiceContinuationSerialTokens($line, $knownSerialPrefixes, false);
+                if ($continuationSerials->isNotEmpty()) {
+                    foreach ($continuationSerials as $serial) {
+                        if (in_array((string) $serial, $pendingSerialContext['serials'], true)) {
+                            continue;
+                        }
+
+                        $items->push($this->buildInvoiceDraftItem(
+                            $pendingSerialContext['description'],
+                            (string) $serial,
+                            $defaultBranchId,
+                            $supplier,
+                            $purchaseOrder,
+                            $invoiceFolio,
+                            0.91,
+                            $preferredBrands
+                        ));
+
+                        $pendingSerialContext['serials'][] = (string) $serial;
+                    }
+
+                    if (
+                        $pendingSerialContext['expected_count'] !== null
+                        && count($pendingSerialContext['serials']) >= $pendingSerialContext['expected_count']
+                    ) {
+                        $pendingSerialContext = null;
+                    }
+
+                    continue;
+                }
+
+                $pendingSerialContext = null;
+            }
+
+            $parts = $this->splitInvoiceRowParts($line);
+
+            if ($parts->count() < 2) {
+                continue;
+            }
+
+            $descriptionIndex = 0;
+            if ($parts->count() >= 3 && preg_match('/^\d+(?:[\.,]\d+)?$/', (string) $parts->first()) === 1) {
+                $descriptionIndex = 1;
+            }
+
+            $description = (string) ($parts->get($descriptionIndex) ?? $parts->first());
+            $description = trim((string) preg_replace('/^(?:\d+\s*[xX]?\s*)/', '', $description));
+            if ($description === '') {
+                continue;
+            }
+
+            $rawDescription = $description;
+
+            if (preg_match('/^\s*(S\/?N|SERIE|SERIES|SERIAL|NO\.?\s*SERIE)\b[:#\-]?/i', $description) === 1) {
+                $contextDescription = $this->inferInvoiceFallbackDescription($normalizedLines, $preferredBrands);
+                if ($contextDescription !== 'Equipo por validar de factura') {
+                    $description = $contextDescription;
+                }
+            }
+
+            $serialSegments = $parts
+                ->filter(fn ($segment, $idx) => $idx !== $descriptionIndex)
+                ->values();
+
+            $hasExplicitSerialMarker = preg_match('/\b(S\/?N|SERIE|SERIES|SERIAL|NO\.?\s*SERIE)\b/i', $rawDescription) === 1;
+            if ($hasExplicitSerialMarker) {
+                $serialSegments->prepend($rawDescription);
+            }
+
+            $partsForExtractor = collect([$description])->merge($serialSegments)->values();
+            $expectedSerialCount = $this->extractInvoiceRowExpectedSerialCount($parts, $descriptionIndex);
+            $serialCandidates = $this->extractConsistentLengthSerialTokens($partsForExtractor, $line, $knownSerialPrefixes);
+            if ($hasExplicitSerialMarker) {
+                $serialCandidates = $this->extractSerialTokensAfterMarker($description, $knownSerialPrefixes)
+                    ->merge($serialCandidates)
+                    ->unique()
+                    ->values();
+            }
+            if ($serialCandidates->isEmpty()) {
+                if ($expectedSerialCount !== null) {
+                    $pendingSerialContext = [
+                        'description' => $description,
+                        'expected_count' => $expectedSerialCount,
+                        'serials' => [],
+                    ];
+                }
+
+                continue;
+            }
+
+            foreach ($serialCandidates as $serial) {
+                $items->push($this->buildInvoiceDraftItem(
+                    $description,
+                    (string) $serial,
+                    $defaultBranchId,
+                    $supplier,
+                    $purchaseOrder,
+                    $invoiceFolio,
+                    0.93,
+                    $preferredBrands
+                ));
+            }
+
+            if (
+                preg_match('/\b(S\/?N|SERIE|SERIES|SERIAL|NO\.?\s*SERIE)\b/i', $line) === 1
+                && ($expectedSerialCount === null || $serialCandidates->count() < $expectedSerialCount)
+            ) {
+                $pendingSerialContext = [
+                    'description' => $description,
+                    'expected_count' => $expectedSerialCount,
+                    'serials' => $serialCandidates->map(fn ($serial) => (string) $serial)->values()->all(),
+                ];
+            }
+        }
+
+        return $items->take(200)->values();
+    }
+
+    private function extractInvoiceContinuationSerialTokens(string $line, array $knownSerialPrefixes = [], bool $requireMarker = true): \Illuminate\Support\Collection
+    {
+        if ($requireMarker && preg_match('/\b(S\/?N|SERIE|SERIES|SERIAL|NO\.?\s*SERIE)\b/i', $line) !== 1) {
+            return collect();
+        }
+
+        preg_match_all('/[A-Z0-9][A-Z0-9\-\/]{5,}/i', $line, $matches);
+
+        return collect($matches[0] ?? [])
+            ->map(fn ($candidate) => strtoupper(trim((string) $candidate, " \t\n\r\0\x0B,.;:()[]{}")))
+            ->filter(fn ($token) => $this->isLikelyInvoiceSerialToken((string) $token, $knownSerialPrefixes))
+            ->unique()
+            ->values();
+    }
+
+    private function extractInvoiceSerialTokensFromMarkerBlocks(\Illuminate\Support\Collection $lines, array $knownSerialPrefixes = []): \Illuminate\Support\Collection
+    {
+        $serials = collect();
+        $capturing = false;
+        $stopPattern = '/\b(subtotal|iva|total|importe|neto|resumen|observaciones|condiciones)\b/i';
+
+        foreach ($lines as $line) {
+            $line = trim((string) $line);
+            if ($line === '') {
+                continue;
+            }
+
+            if (preg_match($stopPattern, $line) === 1) {
+                if ($capturing && $serials->isNotEmpty()) {
+                    break;
+                }
+
+                continue;
+            }
+
+            if (preg_match('/\b(S\/?N|SERIE|SERIES|SERIAL|NO\.?\s*SERIE)\b/i', $line) === 1) {
+                $capturing = true;
+            }
+
+            if (!$capturing) {
+                continue;
+            }
+
+            $lineSerials = preg_match('/\b(S\/?N|SERIE|SERIES|SERIAL|NO\.?\s*SERIE)\b/i', $line) === 1
+                ? $this->extractSerialTokensAfterMarker($line, $knownSerialPrefixes)
+                : $this->extractInvoiceContinuationSerialTokens($line, $knownSerialPrefixes, false);
+            if ($lineSerials->isNotEmpty()) {
+                $serials = $serials->merge($lineSerials)->unique()->values();
+                continue;
+            }
+
+            if ($serials->isNotEmpty()) {
+                break;
+            }
+        }
+
+        return $serials;
+    }
+
+    private function extractSerialTokensAfterMarker(string $line, array $knownSerialPrefixes = []): \Illuminate\Support\Collection
+    {
+        if (preg_match('/\b(S\/?N|SERIE|SERIES|SERIAL|NO\.?\s*SERIE)\b/i', $line) !== 1) {
+            return collect();
+        }
+
+        $afterMarker = preg_replace('/^.*?\b(S\/?N|SERIE|SERIES|SERIAL|NO\.?\s*SERIE)\b\s*[:#\-]?\s*/iu', '', $line);
+        $afterMarker = is_string($afterMarker) ? $afterMarker : $line;
+
+        return $this->extractInvoiceContinuationSerialTokens($afterMarker, $knownSerialPrefixes, false);
+    }
+
+    private function extractInvoiceRowExpectedSerialCount(\Illuminate\Support\Collection $parts, int $descriptionIndex): ?int
+    {
+        $numericParts = $parts
+            ->filter(fn ($segment, $idx) => $idx !== $descriptionIndex)
+            ->map(fn ($segment) => trim((string) $segment))
+            ->filter(fn ($segment) => preg_match('/^\d+(?:[\.,]0+)?$/', $segment) === 1)
+            ->map(fn ($segment) => (int) str_replace([',', '.'], '', $segment))
+            ->filter(fn (int $value) => $value > 0 && $value <= 200)
+            ->values();
+
+        return $numericParts->isNotEmpty() ? (int) $numericParts->last() : null;
+    }
+
+    private function splitInvoiceRowParts(string $line): \Illuminate\Support\Collection
+    {
+        $line = trim((string) $line);
+        if ($line === '') {
+            return collect();
+        }
+
+        if (str_contains($line, '|')) {
+            return collect(explode('|', $line))
+                ->map(fn ($part) => trim((string) $part))
+                ->filter(fn ($part) => $part !== '')
+                ->values();
+        }
+
+        if (str_contains($line, "\t")) {
+            return collect(explode("\t", $line))
+                ->map(fn ($part) => trim((string) $part))
+                ->filter(fn ($part) => $part !== '')
+                ->values();
+        }
+
+        $wideParts = preg_split('/\s{2,}/', $line) ?: [];
+        $wideParts = collect($wideParts)
+            ->map(fn ($part) => trim((string) $part))
+            ->filter(fn ($part) => $part !== '')
+            ->values();
+
+        if ($wideParts->count() >= 2) {
+            return $wideParts;
+        }
+
+        return collect(explode(',', $line))
+            ->map(fn ($part) => trim((string) $part))
+            ->filter(fn ($part) => $part !== '')
+            ->values();
+    }
+
+    private function extractConsistentLengthSerialTokens(\Illuminate\Support\Collection $parts, string $fullLine, array $knownSerialPrefixes = []): \Illuminate\Support\Collection
+    {
+        $tokenPool = collect();
+
+        foreach ($parts->slice(1) as $segment) {
+            preg_match_all('/[A-Z0-9][A-Z0-9\-\/]{5,}/i', (string) $segment, $matches);
+            foreach ($matches[0] ?? [] as $candidate) {
+                $token = strtoupper(trim((string) $candidate, " \t\n\r\0\x0B,.;:()[]{}"));
+                if (!$this->isLikelyInvoiceSerialToken($token, $knownSerialPrefixes)) {
+                    continue;
+                }
+
+                $tokenPool->push($token);
+            }
+        }
+
+        if ($tokenPool->isEmpty()) {
+            return collect();
+        }
+
+        $tokenPool = $tokenPool->unique()->values();
+        $hasExplicitSerialMarker = preg_match('/\b(S\/?N|SERIE|SERIES|SERIAL|NO\.?\s*SERIE)\b/i', $fullLine) === 1;
+
+        if ($hasExplicitSerialMarker) {
+            $markerTokens = collect();
+            $markerReached = false;
+            foreach ($parts->slice(1) as $segment) {
+                $normalizedSegment = strtoupper(trim((string) $segment));
+                if (!$markerReached && preg_match('/\b(S\/?N|SERIE|SERIES|SERIAL|NO\.?\s*SERIE)\b/i', $normalizedSegment) === 1) {
+                    $markerReached = true;
+                }
+
+                if (!$markerReached) {
+                    continue;
+                }
+
+                preg_match_all('/[A-Z0-9][A-Z0-9\-\/]{5,}/i', (string) $segment, $matches);
+                foreach ($matches[0] ?? [] as $candidate) {
+                    $token = strtoupper(trim((string) $candidate, " \t\n\r\0\x0B,.;:()[]{}"));
+                    if (!$this->isLikelyInvoiceSerialToken($token, $knownSerialPrefixes)) {
+                        continue;
+                    }
+
+                    $markerTokens->push($token);
+                }
+            }
+
+            $markerTokens = $markerTokens->unique()->values();
+            if ($markerTokens->isNotEmpty()) {
+                return $markerTokens;
+            }
+        }
+
+        $lengthGroups = $tokenPool
+            ->groupBy(fn (string $token) => strlen($token))
+            ->sortByDesc(fn (\Illuminate\Support\Collection $group) => $group->count());
+
+        $dominantLength = (int) ($lengthGroups->keys()->first() ?? 0);
+        $dominantGroup = $dominantLength > 0
+            ? $tokenPool->filter(fn (string $token) => strlen($token) === $dominantLength)->values()
+            : collect();
+
+        if ($dominantGroup->count() >= 2) {
+            return $dominantGroup;
+        }
+
+        if ($tokenPool->count() >= 2) {
+            // Relaxed fallback: keep valid serial-like tokens even if lengths differ.
+            return $tokenPool;
+        }
+
+        if ($hasExplicitSerialMarker && $dominantGroup->isNotEmpty()) {
+            return $dominantGroup;
+        }
+
+        return collect();
+    }
+
+    private function isLikelyInvoiceSerialToken(string $token, array $knownSerialPrefixes = []): bool
+    {
+        if ($token === '') {
+            return false;
+        }
+
+        if (strlen($token) < 6 || strlen($token) > 32) {
+            return false;
+        }
+
+        if (!preg_match('/[A-Z]/', $token) || !preg_match('/\d/', $token)) {
+            return false;
+        }
+
+        if (!empty($knownSerialPrefixes)) {
+            $normalized = strtoupper($token);
+            foreach ($knownSerialPrefixes as $prefix) {
+                $prefix = strtoupper(trim((string) $prefix));
+                if (strlen($prefix) >= 2 && str_starts_with($normalized, $prefix)) {
+                    return true;
+                }
+            }
+        }
+
+        if (preg_match('/^[0-9\-\/]+$/', $token) === 1) {
+            return false;
+        }
+
+        if (preg_match('/^(TOTAL|SUBTOTAL|IVA|CANTIDAD|PIEZA|PIEZAS|MODELO|MODEL|INTEL|AMD|WINDOWS|OFFICE)$/i', $token) === 1) {
+            return false;
+        }
+
+        if (preg_match('/^(I3|I5|I7|I9|DDR4|DDR5|SSD|NVME|HDD|GHZ|MHZ|TB|GB|RAM)$/i', $token) === 1) {
+            return false;
+        }
+
+        if (preg_match('/\d+(GB|TB|MHZ|GHZ)$/i', $token) === 1) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private function buildInvoiceDraftItem(
+        string $description,
+        ?string $serial,
+        ?int $branchId,
+        string $supplier,
+        string $purchaseOrder,
+        string $invoiceFolio,
+        float $confidence,
+        array $preferredBrands = []
+    ): array {
+        $equipmentType = $this->inferEquipmentTypeFromText($description);
+        $brand = $this->inferBrandFromText($description, $preferredBrands);
+        $model = $this->inferModelFromText($description, $brand);
+        $normalizedSerial = $serial !== null ? strtoupper(trim($serial)) : null;
+        $serialAssessment = $this->assessInvoiceDraftSerial($normalizedSerial);
+        $fieldConfidence = [
+            'description' => $this->assessInvoiceDraftDescriptionConfidence($description),
+            'equipment_type' => $this->assessInvoiceDraftEquipmentTypeConfidence($description, $equipmentType),
+            'brand' => $this->assessInvoiceDraftBrandConfidence($brand),
+            'model' => $this->assessInvoiceDraftModelConfidence($model),
+        ];
+
+        return [
+            'branch_id' => $branchId,
+            'equipment_type' => $equipmentType,
+            'description' => $description,
+            'asset_tag' => null,
+            'hostname' => null,
+            'serial_number' => $normalizedSerial,
+            'serial_status' => $serialAssessment['status'],
+            'serial_status_label' => $serialAssessment['label'],
+            'brand' => $brand,
+            'model' => $model,
+            'purchase_order_number' => $purchaseOrder,
+            'invoice_folio' => $invoiceFolio,
+            'supplier' => $supplier,
+            'notes' => 'Extraído automáticamente de factura (revisar antes de asignar).',
+            'field_confidence' => $fieldConfidence,
+            'confidence' => round($confidence, 2),
+        ];
+    }
+
+    private function assessInvoiceDraftDescriptionConfidence(string $description): array
+    {
+        $value = trim($description);
+        if ($value === '' || preg_match('/^equipo\s+(por\s+validar\s+de\s+)?factura$/i', $value) === 1) {
+            return $this->buildInvoiceDraftFieldConfidence(0.35);
+        }
+
+        if (strlen($value) < 8) {
+            return $this->buildInvoiceDraftFieldConfidence(0.55);
+        }
+
+        if (preg_match('/\b(laptop|desktop|monitor|servidor|server|latitude|thinkpad|optiplex|probook|elitebook|macbook)\b/i', $value) === 1) {
+            return $this->buildInvoiceDraftFieldConfidence(0.9);
+        }
+
+        return $this->buildInvoiceDraftFieldConfidence(0.75);
+    }
+
+    private function assessInvoiceDraftEquipmentTypeConfidence(string $description, string $equipmentType): array
+    {
+        $normalizedDescription = Str::lower(trim($description));
+        if ($normalizedDescription === '' || str_contains($normalizedDescription, 'equipo por validar de factura')) {
+            return $this->buildInvoiceDraftFieldConfidence(0.45);
+        }
+
+        $hintMap = [
+            'laptop' => '/\b(laptop|notebook|latitude|thinkpad|probook|elitebook|zbook|ideapad|macbook|vivobook)\b/i',
+            'desktop' => '/\b(desktop|optiplex|prodesk|elitedesk|torre|cpu)\b/i',
+            'aio' => '/\b(all\s*in\s*one|aio|imac)\b/i',
+            'monitor' => '/\b(monitor|display|pantalla)\b/i',
+            'server' => '/\b(server|servidor|poweredge|proliant|thinksystem)\b/i',
+        ];
+
+        $pattern = $hintMap[$equipmentType] ?? null;
+        if ($pattern && preg_match($pattern, $description) === 1) {
+            return $this->buildInvoiceDraftFieldConfidence(0.88);
+        }
+
+        return $this->buildInvoiceDraftFieldConfidence($equipmentType === 'desktop' ? 0.58 : 0.65);
+    }
+
+    private function assessInvoiceDraftBrandConfidence(?string $brand): array
+    {
+        if ($brand === null || trim($brand) === '') {
+            return $this->buildInvoiceDraftFieldConfidence(0.35);
+        }
+
+        return $this->buildInvoiceDraftFieldConfidence(0.92);
+    }
+
+    private function assessInvoiceDraftModelConfidence(?string $model): array
+    {
+        if ($model === null || trim($model) === '') {
+            return $this->buildInvoiceDraftFieldConfidence(0.35);
+        }
+
+        $value = trim($model);
+        if (strlen($value) < 4) {
+            return $this->buildInvoiceDraftFieldConfidence(0.55);
+        }
+
+        if (preg_match('/\b(latitude|thinkpad|optiplex|probook|elitebook|prodesk|zbook|ideapad|macbook|vivobook|\d{3,4}\s*[a-z]\d?)\b/i', $value) === 1) {
+            return $this->buildInvoiceDraftFieldConfidence(0.9);
+        }
+
+        return $this->buildInvoiceDraftFieldConfidence(0.74);
+    }
+
+    private function buildInvoiceDraftFieldConfidence(float $score): array
+    {
+        $score = max(0.0, min(1.0, $score));
+
+        if ($score >= 0.8) {
+            return [
+                'score' => round($score, 2),
+                'status' => 'alta',
+                'label' => 'Alta',
+            ];
+        }
+
+        if ($score >= 0.6) {
+            return [
+                'score' => round($score, 2),
+                'status' => 'media',
+                'label' => 'Media',
+            ];
+        }
+
+        return [
+            'score' => round($score, 2),
+            'status' => 'baja',
+            'label' => 'Baja',
+        ];
+    }
+
+    private function assessInvoiceDraftSerial(?string $serial): array
+    {
+        $serial = $serial !== null ? trim($serial) : '';
+        if ($serial === '') {
+            return [
+                'status' => 'dudosa',
+                'label' => 'Serie dudosa',
+            ];
+        }
+
+        if (!$this->isLikelyInvoiceSerialToken($serial)) {
+            return [
+                'status' => 'dudosa',
+                'label' => 'Serie dudosa',
+            ];
+        }
+
+        return [
+            'status' => 'validada',
+            'label' => 'Serie validada',
+        ];
+    }
+
+    private function resolveInvoiceVendorProfile(string $supplier): ?InvoiceVendorProfile
+    {
+        $supplierKey = $this->supplierKey($supplier);
+        if ($supplierKey === '') {
+            return null;
+        }
+
+        return InvoiceVendorProfile::query()->where('supplier_key', $supplierKey)->first();
+    }
+
+    private function learnInvoiceVendorProfile(array $payload, array $learnedItems, mixed $actor = null): void
+    {
+        $supplier = trim((string) data_get($payload, 'supplier', ''));
+        if ($supplier === '') {
+            $supplier = trim((string) data_get($learnedItems, '0.supplier', ''));
+        }
+
+        $supplierKey = $this->supplierKey($supplier);
+        if ($supplierKey === '') {
+            return;
+        }
+
+        $profile = InvoiceVendorProfile::query()->firstOrNew([
+            'supplier_key' => $supplierKey,
+        ]);
+        $isNewProfile = !$profile->exists;
+
+        $existingBrands = collect($profile->known_brands ?? [])
+            ->map(fn ($value) => trim((string) $value))
+            ->filter(fn ($value) => $value !== '')
+            ->values();
+        $existingModels = collect($profile->known_models ?? [])
+            ->map(fn ($value) => trim((string) $value))
+            ->filter(fn ($value) => $value !== '')
+            ->values();
+        $existingPrefixes = collect($profile->serial_prefixes ?? [])
+            ->map(fn ($value) => strtoupper(trim((string) $value)))
+            ->filter(fn ($value) => $value !== '')
+            ->values();
+
+        $newBrands = collect($learnedItems)
+            ->pluck('brand')
+            ->map(fn ($value) => trim((string) $value))
+            ->filter(fn ($value) => $value !== '')
+            ->values();
+
+        $newModels = collect($learnedItems)
+            ->pluck('model')
+            ->map(fn ($value) => trim((string) $value))
+            ->filter(fn ($value) => $value !== '')
+            ->values();
+
+        $newPrefixes = collect($learnedItems)
+            ->pluck('serial_number')
+            ->map(fn ($value) => strtoupper(trim((string) $value)))
+            ->filter(fn ($value) => $value !== '')
+            ->map(function (string $serial): ?string {
+                if (preg_match('/^([A-Z]{2,5})/', $serial, $matches) === 1) {
+                    return $matches[1];
+                }
+
+                return null;
+            })
+            ->filter(fn ($value) => is_string($value) && $value !== '')
+            ->values();
+
+        $profile->supplier_name = $supplier;
+        $profile->known_brands = $existingBrands->merge($newBrands)->unique()->take(50)->values()->all();
+        $profile->known_models = $existingModels->merge($newModels)->unique()->take(120)->values()->all();
+        $profile->serial_prefixes = $existingPrefixes->merge($newPrefixes)->unique()->take(60)->values()->all();
+        $profile->last_used_at = now();
+        $profile->save();
+
+        $this->registerInvoiceVendorProfileAudit(
+            action: $isNewProfile ? 'created_from_import' : 'learned_from_import',
+            supplierKey: $supplierKey,
+            supplierName: $supplier,
+            profileId: (int) $profile->id,
+            changedByUserId: is_object($actor) ? ($actor->id ?? null) : null,
+            changedByName: is_object($actor) ? (string) ($actor->name ?? 'Sistema') : 'Sistema',
+            context: [
+                'brands_count' => count($profile->known_brands ?? []),
+                'models_count' => count($profile->known_models ?? []),
+                'serial_prefixes_count' => count($profile->serial_prefixes ?? []),
+                'learned_rows' => count($learnedItems),
+            ]
+        );
+    }
+
+    private function registerInvoiceVendorProfileAudit(
+        string $action,
+        string $supplierKey,
+        ?string $supplierName,
+        ?int $profileId,
+        mixed $changedByUserId,
+        string $changedByName,
+        array $context = []
+    ): void {
+        if ($supplierKey === '' || !$this->invoiceVendorProfileAuditsTableAvailable()) {
+            return;
+        }
+
+        InvoiceVendorProfileAudit::query()->create([
+            'invoice_vendor_profile_id' => $profileId,
+            'supplier_key' => $supplierKey,
+            'supplier_name' => $supplierName,
+            'action' => $action,
+            'changed_by_user_id' => is_numeric($changedByUserId) ? (int) $changedByUserId : null,
+            'changed_by_name' => trim($changedByName) !== '' ? trim($changedByName) : 'Sistema',
+            'context' => $context,
+        ]);
+    }
+
+    private function invoiceVendorProfileAuditsTableAvailable(): bool
+    {
+        static $isAvailable;
+
+        if ($isAvailable !== null) {
+            return $isAvailable;
+        }
+
+        try {
+            $isAvailable = Schema::hasTable('invoice_vendor_profile_audits');
+        } catch (QueryException) {
+            $isAvailable = false;
+        }
+
+        return $isAvailable;
+    }
+
+    private function supplierKey(string $supplier): string
+    {
+        return (string) Str::of($supplier)
+            ->lower()
+            ->replaceMatches('/[^a-z0-9]+/u', '-')
+            ->trim('-');
+    }
+
+    private function inferEquipmentTypeFromText(string $line): string
+    {
+        $line = Str::lower($line);
+
+        // Enterprise family hints improve type accuracy on noisy invoice lines.
+        if (preg_match('/\b(latitude|thinkpad|probook|elitebook|zbook|ideapad|macbook|vivobook|notebook|laptop)\b/i', $line) === 1) {
+            return 'laptop';
+        }
+
+        if (preg_match('/\b(optiplex|prodesk|elitedesk|workcentre|desktop|torre|cpu)\b/i', $line) === 1) {
+            return 'desktop';
+        }
+
+        if (preg_match('/\b(all\s*in\s*one|aio|imac)\b/i', $line) === 1) {
+            return 'aio';
+        }
+
+        if (preg_match('/\b(server|servidor|poweredge|proliant|thinksystem)\b/i', $line) === 1) {
+            return 'server';
+        }
+
+        if (preg_match('/\b(monitor|display|pantalla)\b/i', $line) === 1) {
+            return 'monitor';
+        }
+
+        return match (true) {
+            str_contains($line, 'laptop'), str_contains($line, 'notebook') => 'laptop',
+            str_contains($line, 'monitor') => 'monitor',
+            str_contains($line, 'server'), str_contains($line, 'servidor') => 'server',
+            str_contains($line, 'workstation') => 'workstation',
+            str_contains($line, 'all in one'), str_contains($line, 'aio') => 'aio',
+            default => 'desktop',
+        };
+    }
+
+    private function inferBrandFromText(string $line, array $preferredBrands = []): ?string
+    {
+        $normalized = Str::lower($line);
+        $preferredBrandMap = collect($preferredBrands)
+            ->map(fn ($brand) => trim((string) $brand))
+            ->filter(fn ($brand) => $brand !== '')
+            ->mapWithKeys(fn ($brand) => [Str::lower($brand) => $brand])
+            ->all();
+
+        foreach ($preferredBrandMap as $needle => $label) {
+            if (str_contains($normalized, (string) $needle)) {
+                return (string) $label;
+            }
+        }
+
+        $brandMap = [
+            'hewlett packard' => 'HP',
+            'hp inc' => 'HP',
+            ' hp ' => 'HP',
+            'dell' => 'Dell',
+            'lenovo' => 'Lenovo',
+            'apple' => 'Apple',
+            'acer' => 'Acer',
+            'asus' => 'Asus',
+            'msi' => 'MSI',
+            'huawei' => 'Huawei',
+        ];
+
+        $haystack = ' ' . $normalized . ' ';
+        foreach ($brandMap as $needle => $label) {
+            if (str_contains($haystack, $needle)) {
+                return $label;
+            }
+        }
+
+        return null;
+    }
+
+    private function inferModelFromText(string $line, ?string $brand): ?string
+    {
+        $text = trim((string) preg_replace('/\s+/', ' ', $line));
+        if ($text === '') {
+            return null;
+        }
+
+        $text = trim((string) preg_replace('/\b(S\/?N|SERIE|SERIES|SERIAL|NO\.?\s*SERIE)\b.*$/iu', '', $text));
+        $text = trim((string) preg_replace('/(?:\||,)\s*\d+\s*$/u', '', $text));
+        $text = trim((string) preg_replace('/^\d+\s*[xX]?\s*/u', '', $text));
+        $text = trim((string) preg_replace('/^(equipo|descripcion|descripci[oó]n|art[ií]culo|producto)\s*[:\-]\s*/iu', '', $text));
+
+        if ($brand !== null && $brand !== '') {
+            $text = trim((string) preg_replace('/^' . preg_quote($brand, '/') . '\s+/i', '', $text));
+        }
+
+        $familyModel = $this->extractModelFromKnownFamilies($text, $brand);
+        if ($familyModel !== null) {
+            return $familyModel;
+        }
+
+        $text = trim((string) preg_replace('/\b(intel|amd|core|ryzen|windows|office|ram|ssd|hdd|nvme)\b.*$/iu', '', $text));
+        $text = trim((string) preg_replace('/\b\d+\s*(gb|tb|mhz|ghz)\b.*$/iu', '', $text));
+        $text = trim((string) preg_replace('/[\|,;:\-\s]+$/u', '', $text));
+
+        if (preg_match('/^equipo\s+de\s+factura$/i', $text) === 1) {
+            return null;
+        }
+
+        if ($text === '') {
+            return null;
+        }
+
+        return Str::limit($text, 120, '');
+    }
+
+    private function extractModelFromKnownFamilies(string $text, ?string $brand): ?string
+    {
+        $normalizedText = trim((string) preg_replace('/\s+/', ' ', $text));
+        if ($normalizedText === '') {
+            return null;
+        }
+
+        $patterns = [
+            '/\b(latitude\s+[a-z0-9\-]{2,})\b/iu',
+            '/\b(optiplex\s+[a-z0-9\-]{2,})\b/iu',
+            '/\b(precision\s+[a-z0-9\-]{2,})\b/iu',
+            '/\b(vostro\s+[a-z0-9\-]{2,})\b/iu',
+            '/\b(inspiron\s+[a-z0-9\-]{2,})\b/iu',
+            '/\b(probook\s+[a-z0-9\-]{2,})\b/iu',
+            '/\b(elitebook\s+[a-z0-9\-]{2,})\b/iu',
+            '/\b(prodesk\s+[a-z0-9\-]{2,})\b/iu',
+            '/\b(zbook\s+[a-z0-9\-]{2,})\b/iu',
+            '/\b(thinkpad\s+[a-z0-9\-]{2,})\b/iu',
+            '/\b(ideapad\s+[a-z0-9\-]{2,})\b/iu',
+            '/\b(macbook\s+(?:air|pro)(?:\s+[a-z0-9\-]{2,})?)\b/iu',
+            '/\b(vivobook\s+[a-z0-9\-]{2,})\b/iu',
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $normalizedText, $matches) === 1) {
+                return Str::title(trim((string) ($matches[1] ?? '')));
+            }
+        }
+
+        // HP sometimes arrives as "HP 240 G9" or "Hewlett Packard 240 G9" without family word.
+        if ($brand !== null && strcasecmp($brand, 'HP') === 0) {
+            if (preg_match('/\b([0-9]{3,4}\s+[a-z][0-9]{1,2})\b/iu', $normalizedText, $matches) === 1) {
+                return strtoupper(trim((string) ($matches[1] ?? '')));
+            }
+        }
+
+        return null;
+    }
+
+    private function inferInvoiceFallbackDescription(
+        \Illuminate\Support\Collection $lines,
+        array $knownBrands = [],
+        array $knownModels = []
+    ): string {
+        $candidates = $lines
+            ->map(fn ($line) => trim((string) preg_replace('/\s+/', ' ', (string) $line)))
+            ->filter(fn ($line) => $line !== '')
+            ->reject(fn ($line) => preg_match('/\b(S\/?N|SERIE|SERIES|SERIAL|NO\.?\s*SERIE|subtotal|iva|total|importe|neto|resumen|observaciones|condiciones)\b/i', $line) === 1)
+            ->values();
+
+        $scored = $candidates
+            ->map(function (string $line) use ($knownBrands, $knownModels): array {
+                $normalized = Str::lower($line);
+                $score = 0;
+
+                if (preg_match('/\b(laptop|notebook|desktop|pc|workstation|servidor|monitor|all\s*in\s*one|aio|latitude|thinkpad|optiplex|probook|elitebook|vostro|inspiron|prodesk|zbook|ideapad|macbook|vivobook)\b/i', $line) === 1) {
+                    $score += 3;
+                }
+
+                if (collect($knownBrands)->contains(fn ($brand) => str_contains($normalized, Str::lower(trim((string) $brand))))) {
+                    $score += 3;
+                }
+
+                if (collect($knownModels)->contains(fn ($model) => str_contains($normalized, Str::lower(trim((string) $model))))) {
+                    $score += 2;
+                }
+
+                if (preg_match('/\b(dell|lenovo|hp|hewlett\s*packard|apple|acer|asus|msi|huawei)\b/i', $line) === 1) {
+                    $score += 2;
+                }
+
+                return [
+                    'line' => $line,
+                    'score' => $score,
+                ];
+            })
+            ->sortByDesc('score')
+            ->values();
+
+        $best = $scored->first();
+        if (is_array($best) && ((int) ($best['score'] ?? 0)) >= 2) {
+            return (string) ($best['line'] ?? 'Equipo por validar de factura');
+        }
+
+        return 'Equipo por validar de factura';
+    }
+
+    private function extractFirstMatch(string $text, array $patterns): string
+    {
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $text, $matches) === 1) {
+                if (count($matches) > 2) {
+                    return trim((string) end($matches));
+                }
+
+                return trim((string) ($matches[1] ?? ''));
+            }
+        }
+
+        return '';
+    }
+
+    private function detectCsvDelimiter(string $sampleLine): string
+    {
+        $sampleLine = ltrim($sampleLine, "\xEF\xBB\xBF");
+        $counts = [
+            ',' => substr_count($sampleLine, ','),
+            ';' => substr_count($sampleLine, ';'),
+            "\t" => substr_count($sampleLine, "\t"),
+        ];
+
+        arsort($counts);
+
+        return (string) array_key_first($counts);
+    }
+
+    private function normalizeImportHeader(string $header): string
+    {
+        $header = Str::of($header)
+            ->replaceMatches('/^\x{FEFF}/u', '')
+            ->trim()
+            ->lower()
+            ->replaceMatches('/[^a-z0-9]+/u', '_')
+            ->trim('_')
+            ->toString();
+
+        return match ($header) {
+            'sede', 'sede_id', 'sucursal', 'branch', 'branchid' => 'branch_id',
+            'tipo', 'tipo_equipo', 'equipmenttype' => 'equipment_type',
+            'etiqueta', 'assettag' => 'asset_tag',
+            'serie', 'numero_serie', 'serial', 'serialnumber' => 'serial_number',
+            'marca' => 'brand',
+            'modelo' => 'model',
+            'procesador' => 'cpu',
+            'ram' => 'ram_gb',
+            'tipo_almacenamiento', 'storage' => 'storage_type',
+            'almacenamiento_gb', 'disco_gb' => 'storage_gb',
+            'sistema_operativo' => 'operating_system',
+            'office', 'version_office' => 'office_version',
+            'orden_compra', 'numero_orden_compra', 'oc', 'purchaseordernumber' => 'purchase_order_number',
+            'proveedor', 'supplier' => 'supplier',
+            'fecha_compra' => 'purchase_date',
+            'garantia_hasta', 'fecha_garantia' => 'warranty_expires_at',
+            'observaciones', 'notas' => 'notes',
+            default => $header,
+        };
+    }
+
+    private function combineImportCsvRow(array $headers, array $row): array
+    {
+        $data = [];
+        foreach ($headers as $index => $header) {
+            $data[$header] = $row[$index] ?? null;
+        }
+
+        return $data;
+    }
+
+    private function importCsvRowIsEmpty(array $row): bool
+    {
+        foreach ($row as $cell) {
+            if (trim((string) $cell) !== '') {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function normalizeImportText(mixed $value): ?string
+    {
+        $text = trim((string) ($value ?? ''));
+
+        return $text !== '' ? $text : null;
+    }
+
+    private function parseImportInteger(mixed $value): ?int
+    {
+        $text = trim((string) ($value ?? ''));
+        if ($text === '') {
+            return null;
+        }
+
+        if (!is_numeric($text)) {
+            return null;
+        }
+
+        return (int) $text;
+    }
+
+    private function normalizeImportDate(mixed $value): ?string
+    {
+        $text = trim((string) ($value ?? ''));
+        if ($text === '') {
+            return null;
+        }
+
+        try {
+            return Carbon::parse($text)->toDateString();
+        } catch (\Throwable $exception) {
+            return null;
+        }
     }
 
     public function downloadComputerAssetResponsiva(Request $request, ComputerAsset $computerAsset)
@@ -3344,6 +4948,7 @@ SVG;
             'asset_storage_gb' => ['nullable', 'integer', 'min:1', 'max:200000'],
             'asset_operating_system' => ['nullable', 'string', 'max:120'],
             'asset_office_version' => ['nullable', 'string', 'max:120'],
+            'asset_purchase_order_number' => ['nullable', 'string', 'max:120'],
             'asset_purchase_date' => ['nullable', 'date'],
             'asset_warranty_expires_at' => ['nullable', 'date'],
             'asset_status' => ['required', Rule::in(array_keys(ComputerAsset::statusOptions()))],
@@ -3373,6 +4978,7 @@ SVG;
         $newAssigned = trim((string) ($validated['asset_assigned_user'] ?? ''));
         $interactionNote = trim((string) ($validated['asset_interaction_note'] ?? ''));
         $newResponsiva = trim((string) ($validated['asset_responsiva_reference'] ?? ''));
+        $newPurchaseOrderNumber = trim((string) ($validated['asset_purchase_order_number'] ?? ''));
         $assignmentInvoiceFolio = trim((string) ($validated['asset_assignment_invoice_folio'] ?? ''));
         $assignmentSupplier = trim((string) ($validated['asset_assignment_supplier'] ?? ''));
         $assignmentReceivedBy = trim((string) ($validated['asset_assignment_received_by'] ?? ''));
@@ -3429,6 +5035,7 @@ SVG;
             $oldStatus = (string) ($existingAsset->status ?? '');
             $oldAssigned = trim((string) ($existingAsset->assigned_user ?? ''));
             $oldResponsiva = trim((string) data_get($existingAsset->details, 'responsiva.reference', ''));
+            $oldPurchaseOrderNumber = trim((string) data_get($existingAsset->details, 'procurement.purchase_order_number', ''));
 
             if ($oldStatus !== $newStatus) {
                 $changes[] = sprintf(
@@ -3454,6 +5061,14 @@ SVG;
                 );
             }
 
+            if ($oldPurchaseOrderNumber !== $newPurchaseOrderNumber) {
+                $changes[] = sprintf(
+                    'Orden de compra: %s → %s',
+                    $oldPurchaseOrderNumber !== '' ? $oldPurchaseOrderNumber : 'Sin orden',
+                    $newPurchaseOrderNumber !== '' ? $newPurchaseOrderNumber : 'Sin orden'
+                );
+            }
+
             $shouldCreateAssignmentLog = $oldAssigned !== $newAssigned;
         } else {
             $changes[] = sprintf('Activo creado con estatus %s', $statusOptions[$newStatus] ?? $newStatus);
@@ -3462,6 +5077,9 @@ SVG;
             }
             if ($newResponsiva !== '') {
                 $changes[] = sprintf('Responsiva inicial: %s', $newResponsiva);
+            }
+            if ($newPurchaseOrderNumber !== '') {
+                $changes[] = sprintf('Orden de compra inicial: %s', $newPurchaseOrderNumber);
             }
 
             $shouldCreateAssignmentLog = $newAssigned !== '';
@@ -3511,6 +5129,12 @@ SVG;
             data_set($payload, 'responsiva.reference', $newResponsiva);
         } elseif (array_key_exists('asset_responsiva_reference', $validated)) {
             data_set($payload, 'responsiva.reference', null);
+        }
+
+        if ($newPurchaseOrderNumber !== '') {
+            data_set($payload, 'procurement.purchase_order_number', $newPurchaseOrderNumber);
+        } elseif (array_key_exists('asset_purchase_order_number', $validated)) {
+            data_set($payload, 'procurement.purchase_order_number', null);
         }
 
         if (!empty($changes) || $interactionNote !== '') {

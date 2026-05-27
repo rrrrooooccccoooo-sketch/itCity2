@@ -34,6 +34,7 @@ class ComputerAsset extends Model
         return [
             'in_use' => 'En uso',
             'stock' => 'En stock',
+            'pending_assignment' => 'Pendiente de asignación',
             'repair' => 'En reparacion',
             'retired' => 'Retirado',
         ];
@@ -70,6 +71,8 @@ class ComputerAsset extends Model
 
     public static function statusOptions(): array
     {
+        $options = static::defaultStatusOptions();
+
         if (Schema::hasTable('asset_status_catalogs')) {
             $items = AssetStatusCatalog::query()
                 ->orderByDesc('is_active')
@@ -79,11 +82,11 @@ class ComputerAsset extends Model
                 ->toArray();
 
             if (!empty($items)) {
-                return $items;
+                return array_merge($options, $items);
             }
         }
 
-        return static::defaultStatusOptions();
+        return $options;
     }
 
     protected $fillable = [

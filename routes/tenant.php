@@ -140,6 +140,11 @@ Route::middleware([
         Route::middleware('tenant.can:inventory.manage')->group(function () {
 
             Route::post('/computer-assets', [AdminController::class, 'storeComputerAsset']);
+            Route::get('/computer-assets/import-template', [AdminController::class, 'downloadComputerAssetImportTemplate']);
+            Route::post('/computer-assets/import', [AdminController::class, 'importComputerAssets']);
+            Route::post('/computer-assets/invoice/analyze', [AdminController::class, 'analyzeComputerAssetInvoice']);
+            Route::post('/computer-assets/invoice/import', [AdminController::class, 'importComputerAssetsFromInvoiceDraft']);
+            Route::post('/computer-assets/invoice/vendor-profile/reset', [AdminController::class, 'resetInvoiceVendorProfile']);
             Route::post('/computer-assets/{computerAsset}/reassign', [AdminController::class, 'reassignComputerAsset']);
             Route::post('/computer-assets/{computerAsset}/transfer-requests', [AdminController::class, 'requestComputerAssetTransfer']);
             Route::post('/computer-assets/transfer-requests/{transferRequest}/decision', [AdminController::class, 'decideComputerAssetTransferRequest']);

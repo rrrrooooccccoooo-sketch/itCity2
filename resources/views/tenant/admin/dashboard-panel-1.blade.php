@@ -10,6 +10,11 @@
     $outgoingTransferPendingCount = isset($outgoingTransferRequests) ? (int) $outgoingTransferRequests->count() : 0;
     $transferHistoryCount = isset($transferRequestHistory) ? (int) $transferRequestHistory->count() : 0;
     $showTransferPendingPanel = $incomingTransferPendingCount > 0 || $outgoingTransferPendingCount > 0;
+    $assetInvoiceDraft = session('assetInvoiceDraft');
+    $hasInvoiceDraft = is_array($assetInvoiceDraft) && !empty(data_get($assetInvoiceDraft, 'items', []));
+    $autoOpenInvoiceDraft = (bool) session('assetInvoiceAutoOpenDraft', false);
+    $hasInvoiceActionErrors = $errors->has('asset_invoice_file') || $errors->has('asset_invoice_payload') || $errors->has('asset_invoice_branch_id');
+    $activateAssetsTab = $hasInvoiceDraft || $hasInvoiceActionErrors;
 @endphp
 <div class="container-fluid py-4">
 
@@ -30,18 +35,36 @@
         </div>
     </div>
 
+    @if (session('status'))
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+        {{ session('status') }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Cerrar"></button>
+    </div>
+    @endif
+
+    @if ($hasInvoiceActionErrors)
+    <div class="alert alert-danger" role="alert">
+        <strong>No se pudo analizar/importar la factura.</strong>
+        <ul class="mb-0 mt-2">
+            @foreach (collect($errors->get('asset_invoice_file'))->merge($errors->get('asset_invoice_payload'))->merge($errors->get('asset_invoice_branch_id')) as $error)
+                <li>{{ $error }}</li>
+            @endforeach
+        </ul>
+    </div>
+    @endif
+
     {{-- Navigation Tabs --}}
     <div class="sticky-navigation mb-3">
         <div class="sticky-navigation-inner">
             <span class="sticky-navigation-label">Módulos</span>
             <ul class="nav nav-pills flex-nowrap gap-1" role="tablist">
             <li class="nav-item">
-                <a href="#section-monitoring" class="nav-link active small" data-bs-toggle="tab">
+                <a href="#section-monitoring" class="nav-link {{ $activateAssetsTab ? '' : 'active' }} small" data-bs-toggle="tab">
                     <i class="bi bi-speedometer2"></i> Monitoreo
                 </a>
             </li>
             <li class="nav-item">
-                <a href="#section-assets" class="nav-link small" data-bs-toggle="tab">
+                <a href="#section-assets" class="nav-link {{ $activateAssetsTab ? 'active' : '' }} small" data-bs-toggle="tab">
                     <i class="bi bi-hdd"></i> Inventario
                     @if ($canInventoryManage && $incomingTransferPendingCount > 0)
                         <span class="badge text-bg-danger ms-1">{{ $incomingTransferPendingCount }}</span>
@@ -431,7 +454,7 @@
         </div>
 
         {{-- ===== MONITORING SECTION (5) ===== --}}
-        <div class="tab-pane fade show active" id="section-monitoring">
+        <div class="tab-pane fade {{ $activateAssetsTab ? '' : 'show active' }}" id="section-monitoring">
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <div>
                     <h3 class="mb-1">Monitoreo en Vivo</h3>
@@ -807,7 +830,7 @@
         </div>
 
         {{-- ===== ASSETS/INVENTORY SECTION (9) ===== --}}
-        <div class="tab-pane fade" id="section-assets">
+        <div class="tab-pane fade {{ $activateAssetsTab ? 'show active' : '' }}" id="section-assets">
             <div class="inventory-compact-toolbar mb-2">
                 <div class="small text-muted">Vista compacta: oculta paneles para ver mas equipos en pantalla.</div>
                 <div class="d-flex flex-wrap gap-2 mt-2">
@@ -860,12 +883,35 @@
                     </button>
                     @endif
                     @if ($canInventoryManage)
+                    <button id="btnOpenInvoiceAnalyzerModal" class="btn btn-outline-dark btn-sm" data-bs-toggle="modal" data-bs-target="#modalAssetInvoiceAnalyzer">
+                        <i class="bi bi-file-earmark-text"></i> Analizar factura
+                    </button>
+                    @if ($hasInvoiceDraft)
+                    <button id="btnOpenInvoiceDraftModal" class="btn btn-outline-success btn-sm" data-bs-toggle="modal" data-bs-target="#modalAssetInvoiceDraft">
+                        <i class="bi bi-magic"></i> Ver borrador detectado
+                    </button>
+                    @endif
+                    <button id="btnOpenImportAssetsModal" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalAssetImport">
+                        <i class="bi bi-upload"></i> Carga masiva
+                    </button>
                     <button id="btnOpenNewAssetModal" class="btn btn-primary btn-sm ms-md-auto" data-bs-toggle="modal" data-bs-target="#modalAsset">
                         <i class="bi bi-plus-circle"></i> Nuevo activo
                     </button>
                     @endif
                 </div>
             </div>
+
+            @if ($canInventoryManage && $hasInvoiceDraft)
+            <div class="alert alert-primary d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+                <div>
+                    <strong>Borrador detectado desde factura.</strong>
+                    <span class="small">Archivo: {{ data_get($assetInvoiceDraft, 'file_name', 'N/A') }} · Ítems detectados: {{ count(data_get($assetInvoiceDraft, 'items', [])) }}</span>
+                </div>
+                <button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#modalAssetInvoiceDraft">
+                    <i class="bi bi-eye"></i> Abrir borrador
+                </button>
+            </div>
+            @endif
 
             @if ($canInventoryManage)
             <div id="inventoryTransferRequestsPanel" class="collapse">
@@ -1505,6 +1551,7 @@
                                     data-asset-assigned-user="{{ $asset->assigned_user ?? '' }}"
                                     data-asset-notes="{{ $asset->notes ?? '' }}"
                                     data-asset-responsiva-reference="{{ data_get($asset->details, 'responsiva.reference', '') }}"
+                                    data-asset-purchase-order-number="{{ data_get($asset->details, 'procurement.purchase_order_number', '') }}"
                                     data-asset-assignment-invoice-folio="{{ data_get($latestAssignmentLog, 'invoice_folio', '') }}"
                                     data-asset-assignment-supplier="{{ data_get($latestAssignmentLog, 'supplier', '') }}"
                                     data-asset-assignment-delivery-date="{{ data_get($latestAssignmentLog, 'assigned_at', '') }}"
@@ -1557,48 +1604,51 @@
                                             $monitorStateLabel = !$hasHeartbeat
                                                 ? 'Sin agente'
                                                 : ($isCriticalMetric ? 'Crítico' : ($isMonitoringActive ? 'Monitoreando' : 'Sin señal'));
+                                            $inventoryMetaCompact = \Illuminate\Support\Str::limit((string) $inventoryMetaSummary, 48);
                                         @endphp
-                                        <div>{{ $asset->last_seen_at?->format('d/m H:i') ?? '—' }}</div>
-                                        <div class="mt-1">
-                                            <span class="monitor-pill {{ $monitorStateClass }}">{{ $monitorStateLabel }}</span>
-                                        </div>
-                                        @if ($hasHeartbeat && $hasMonitoringMetrics)
-                                            <div class="small mt-1">
-                                                CPU {{ $cpuUsage !== null ? number_format((float) $cpuUsage, 1) . '%' : 'N/A' }} ·
-                                                RAM {{ $memoryUsage !== null ? number_format((float) $memoryUsage, 1) . '%' : 'N/A' }} ·
-                                                Disco {{ $diskUsage !== null ? number_format((float) $diskUsage, 1) . '%' : 'N/A' }}
+                                            <div class="d-flex align-items-center gap-1 flex-wrap">
+                                                <span>{{ $asset->last_seen_at?->format('d/m H:i') ?? '—' }}</span>
+                                                <span class="monitor-pill {{ $monitorStateClass }}">{{ $monitorStateLabel }}</span>
                                             </div>
-                                        @elseif ($hasHeartbeat)
-                                            <div class="small mt-1 text-muted">Agente activo, esperando métricas de auditoría</div>
-                                        @endif
-                                        <div class="text-muted small">
-                                            {{ $inventoryMetaSummary }}
-                                        </div>
-                                        <button type="button" class="btn btn-sm btn-outline-secondary mt-1 js-open-asset-detail">
-                                            <i class="bi bi-info-circle"></i> Info adicional
-                                        </button>
+                                            @if ($hasHeartbeat && $hasMonitoringMetrics)
+                                                <div class="inventory-telemetry-badges mt-1">
+                                                    <span class="badge bg-{{ $monitoringBadgeClass('cpu', $cpuUsage) }}" data-bs-toggle="tooltip" title="Uso de CPU">CPU {{ $cpuUsage !== null ? number_format((float) $cpuUsage, 1) . '%' : 'N/A' }}</span>
+                                                    <span class="badge bg-{{ $monitoringBadgeClass('ram', $memoryUsage) }}" data-bs-toggle="tooltip" title="Uso de RAM">RAM {{ $memoryUsage !== null ? number_format((float) $memoryUsage, 1) . '%' : 'N/A' }}</span>
+                                                    <span class="badge bg-{{ $monitoringBadgeClass('disco', $diskUsage) }}" data-bs-toggle="tooltip" title="Uso de disco">DSK {{ $diskUsage !== null ? number_format((float) $diskUsage, 1) . '%' : 'N/A' }}</span>
+                                                </div>
+                                            @elseif ($hasHeartbeat)
+                                                <div class="small mt-1 text-muted">Sin métricas</div>
+                                            @endif
+                                            <div class="text-muted small" data-bs-toggle="tooltip" title="{{ $inventoryMetaSummary }}">
+                                                {{ $inventoryMetaCompact }}
+                                            </div>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary mt-1 inventory-action-btn js-open-asset-detail" aria-label="Info adicional" data-bs-toggle="tooltip" title="Info adicional">
+                                                <i class="bi bi-info-circle" aria-hidden="true"></i>
+                                            </button>
                                     </td>
                                     <td>
-                                        <a href="{{ url('/admin/computer-assets/' . $asset->id . '/responsiva/preview') }}" class="btn btn-sm btn-outline-secondary" target="_blank" rel="noopener">
-                                            <i class="bi bi-eye"></i> Ver
-                                        </a>
-                                        <a href="{{ url('/admin/computer-assets/' . $asset->id . '/responsiva') }}" class="btn btn-sm btn-outline-secondary">
-                                            <i class="bi bi-filetype-pdf"></i> Descargar
-                                        </a>
-                                        <a href="{{ url('/admin/computer-assets/' . $asset->id . '/assignment-log') }}" class="btn btn-sm btn-outline-secondary" target="_blank" rel="noopener">
-                                            <i class="bi bi-journal-text"></i> Bitácora
-                                        </a>
-                                        @if ($canInventoryManage)
-                                        <button type="button" class="btn btn-sm btn-outline-info js-request-transfer-asset" data-bs-toggle="modal" data-bs-target="#modalAssetTransferRequest">
-                                            <i class="bi bi-send"></i> Solicitar traslado
-                                        </button>
-                                        <button type="button" class="btn btn-sm btn-outline-warning js-reassign-asset" data-bs-toggle="modal" data-bs-target="#modalAssetReassign">
-                                            <i class="bi bi-arrow-left-right"></i> Reasignar
-                                        </button>
-                                        <button type="button" class="btn btn-sm btn-outline-primary js-edit-asset" data-bs-toggle="modal" data-bs-target="#modalAsset">
-                                            <i class="bi bi-pencil"></i> Editar
-                                        </button>
-                                        @endif
+                                        <div class="d-flex flex-wrap gap-1 inventory-actions">
+                                            <a href="{{ url('/admin/computer-assets/' . $asset->id . '/responsiva/preview') }}" class="btn btn-sm btn-outline-secondary inventory-action-btn" target="_blank" rel="noopener" aria-label="Ver responsiva" data-bs-toggle="tooltip" title="Ver responsiva">
+                                                <i class="bi bi-eye" aria-hidden="true"></i>
+                                            </a>
+                                            <a href="{{ url('/admin/computer-assets/' . $asset->id . '/responsiva') }}" class="btn btn-sm btn-outline-secondary inventory-action-btn" aria-label="Descargar responsiva" data-bs-toggle="tooltip" title="Descargar responsiva">
+                                                <i class="bi bi-filetype-pdf" aria-hidden="true"></i>
+                                            </a>
+                                            <a href="{{ url('/admin/computer-assets/' . $asset->id . '/assignment-log') }}" class="btn btn-sm btn-outline-secondary inventory-action-btn" target="_blank" rel="noopener" aria-label="Abrir bitácora" data-bs-toggle="tooltip" title="Bitácora">
+                                                <i class="bi bi-journal-text" aria-hidden="true"></i>
+                                            </a>
+                                            @if ($canInventoryManage)
+                                            <button type="button" class="btn btn-sm btn-outline-info js-request-transfer-asset inventory-action-btn" data-bs-toggle="modal" data-bs-target="#modalAssetTransferRequest" aria-label="Solicitar traslado" title="Solicitar traslado">
+                                                <i class="bi bi-send" aria-hidden="true"></i>
+                                            </button>
+                                            <button type="button" class="btn btn-sm btn-outline-warning js-reassign-asset inventory-action-btn" data-bs-toggle="modal" data-bs-target="#modalAssetReassign" aria-label="Reasignar activo" title="Reasignar">
+                                                <i class="bi bi-arrow-left-right" aria-hidden="true"></i>
+                                            </button>
+                                            <button type="button" class="btn btn-sm btn-outline-primary js-edit-asset inventory-action-btn" data-bs-toggle="modal" data-bs-target="#modalAsset" aria-label="Editar activo" title="Editar">
+                                                <i class="bi bi-pencil" aria-hidden="true"></i>
+                                            </button>
+                                            @endif
+                                        </div>
                                     </td>
                                 </tr>
                             @empty
@@ -2208,6 +2258,10 @@
                             <input type="text" name="asset_responsiva_reference" class="form-control" maxlength="120" placeholder="Ej. RESP-2026-014">
                         </div>
                         <div class="col-md-6">
+                            <label class="form-label">Orden de compra</label>
+                            <input type="text" name="asset_purchase_order_number" class="form-control" maxlength="120" placeholder="Ej. OC-2026-001">
+                        </div>
+                        <div class="col-md-6">
                             <label class="form-label">Folio factura</label>
                             <input type="text" name="asset_assignment_invoice_folio" class="form-control" maxlength="120" placeholder="Ej. FAC-2026-00122">
                         </div>
@@ -2246,6 +2300,281 @@
                     <button type="submit" class="btn btn-primary" id="modalAssetSubmitButton">Guardar</button>
                 </div>
             </form>
+        </div>
+    </div>
+</div>
+@endif
+
+{{-- MODAL: Asset Bulk Import --}}
+@if ($canInventoryManage)
+<div class="modal fade" id="modalAssetImport" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form method="POST" action="{{ url('/admin/computer-assets/import') }}" enctype="multipart/form-data">
+                @csrf
+                <div class="modal-header">
+                    <h5 class="modal-title">Carga masiva de activos TI</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info small mb-3">
+                        Usa el layout CSV para cargar equipos en estado <strong>Pendiente de asignación</strong>. La lectura automática de factura puede agregarse después como una fase aparte.
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Sede por defecto</label>
+                            <select name="asset_import_branch_id" class="form-select">
+                                <option value="">Usar la sede indicada en el layout</option>
+                                @foreach ($branches as $branch)
+                                    <option value="{{ $branch->id }}">{{ $branch->name }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+                        <div class="col-md-6 d-flex align-items-end">
+                            <a href="{{ url('/admin/computer-assets/import-template') }}" class="btn btn-outline-secondary w-100">
+                                Descargar layout CSV
+                            </a>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Archivo CSV</label>
+                            <input type="file" name="asset_import_file" class="form-control" accept=".csv,.txt,text/csv" required>
+                            <div class="form-text">Columnas sugeridas (layout en español): sede_id, tipo_equipo, etiqueta, hostname, numero_serie, marca, modelo, procesador, ram_gb, tipo_almacenamiento, almacenamiento_gb, sistema_operativo, version_office, numero_orden_compra, proveedor, fecha_compra, garantia_hasta, observaciones.</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Importar activos</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+@endif
+
+{{-- MODAL: Invoice Analyzer --}}
+@if ($canInventoryManage)
+<div class="modal fade" id="modalAssetInvoiceAnalyzer" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url('/admin/computer-assets/invoice/analyze') }}" enctype="multipart/form-data" id="assetInvoiceAnalyzerForm">
+                @csrf
+                <div class="modal-header">
+                    <h5 class="modal-title">Analizar factura (PDF/TXT)</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning small">
+                        MVP gratuito local: extrae datos de facturas con texto digital. Si la factura es imagen/escaneo, el resultado puede ser parcial.
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <label class="form-label">Sede por defecto (opcional)</label>
+                            <select name="asset_invoice_branch_id" class="form-select">
+                                <option value="">Sin sede predefinida</option>
+                                @foreach ($branches as $branch)
+                                    <option value="{{ $branch->id }}">{{ $branch->name }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Archivo de factura</label>
+                            <input type="file" name="asset_invoice_file" class="form-control" accept=".pdf,.txt,application/pdf,text/plain" required>
+                            <div class="form-text">Se detectan automáticamente folio, proveedor, orden de compra y equipos candidatos.</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-dark" id="assetInvoiceAnalyzerSubmitButton">
+                        <span class="js-analyzer-submit-label">Analizar factura</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+@endif
+
+{{-- MODAL: Invoice Draft Preview --}}
+@if ($canInventoryManage && $hasInvoiceDraft)
+<div class="modal fade" id="modalAssetInvoiceDraft" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Borrador detectado desde factura</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-2 small mb-3">
+                    <div class="col-md-3"><strong>Proveedor:</strong> {{ data_get($assetInvoiceDraft, 'supplier', 'N/A') }}</div>
+                    <div class="col-md-3"><strong>Folio:</strong> {{ data_get($assetInvoiceDraft, 'invoice_folio', 'N/A') }}</div>
+                    <div class="col-md-3"><strong>Orden compra:</strong> {{ data_get($assetInvoiceDraft, 'purchase_order_number', 'N/A') }}</div>
+                    <div class="col-md-3"><strong>Fecha:</strong> {{ data_get($assetInvoiceDraft, 'invoice_date', 'N/A') }}</div>
+                </div>
+
+                <div class="alert alert-light border small mb-3">
+                    Revisa los datos detectados. Si están correctos, importa y los activos quedarán en estado <strong>Pendiente de asignación</strong>.
+                </div>
+
+                @php
+                    $draftProfileMatched = (bool) data_get($assetInvoiceDraft, 'profile_matched', false);
+                    $draftKnownBrands = collect(data_get($assetInvoiceDraft, 'supplier_profile.known_brands', []))->filter()->values();
+                    $draftKnownModels = collect(data_get($assetInvoiceDraft, 'supplier_profile.known_models', []))->filter()->values();
+                    $draftSerialPrefixes = collect(data_get($assetInvoiceDraft, 'supplier_profile.serial_prefixes', []))->filter()->values();
+                    $draftProfileLastUsedAt = data_get($assetInvoiceDraft, 'supplier_profile.last_used_at');
+                    $draftProfileAudits = collect(data_get($assetInvoiceDraft, 'supplier_profile.audits', []))->filter(fn ($item) => is_array($item))->values();
+                @endphp
+                <div class="card border mb-3">
+                    <div class="card-body py-2">
+                        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+                            <div>
+                                <div class="small fw-semibold">Perfil aprendido del proveedor</div>
+                                <div class="small text-muted">
+                                    Estado: {{ $draftProfileMatched ? 'Encontrado' : 'No encontrado' }}
+                                    @if ($draftProfileLastUsedAt)
+                                        · Último uso: {{ \Illuminate\Support\Carbon::parse($draftProfileLastUsedAt)->format('d/m/Y H:i') }}
+                                    @endif
+                                </div>
+                                <div class="small text-muted">
+                                    Marcas: {{ $draftKnownBrands->take(8)->join(', ') ?: 'N/A' }}
+                                </div>
+                                <div class="small text-muted">
+                                    Prefijos serie: {{ $draftSerialPrefixes->take(10)->join(', ') ?: 'N/A' }}
+                                </div>
+                                <div class="small text-muted">
+                                    Modelos aprendidos: {{ $draftKnownModels->count() }}
+                                </div>
+                            </div>
+                            <form method="POST" action="{{ url('/admin/computer-assets/invoice/vendor-profile/reset') }}" class="m-0">
+                                @csrf
+                                <input type="hidden" name="asset_invoice_supplier_name" value="{{ data_get($assetInvoiceDraft, 'supplier', '') }}">
+                                <button type="submit" class="btn btn-outline-danger btn-sm" onclick="return confirm('¿Reiniciar el perfil aprendido de este proveedor?');">
+                                    Reiniciar perfil proveedor
+                                </button>
+                            </form>
+                        </div>
+                        @if ($draftProfileAudits->isNotEmpty())
+                        <hr class="my-2">
+                        <div class="small fw-semibold mb-1">Historial reciente del perfil</div>
+                        <div class="small text-muted">
+                            @foreach ($draftProfileAudits as $audit)
+                                <div>
+                                    <span class="badge text-bg-light border">{{ data_get($audit, 'action', 'N/A') }}</span>
+                                    {{ data_get($audit, 'changed_by_name', 'Sistema') }}
+                                    · {{ data_get($audit, 'created_at') ? \Illuminate\Support\Carbon::parse((string) data_get($audit, 'created_at'))->format('d/m/Y H:i') : 'N/A' }}
+                                </div>
+                            @endforeach
+                        </div>
+                        @endif
+                    </div>
+                </div>
+
+                <div class="table-responsive mb-3">
+                    <table class="table table-sm table-striped align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Incluir</th>
+                                <th>Descripción</th>
+                                <th>Tipo</th>
+                                <th>Marca</th>
+                                <th>Modelo</th>
+                                <th>Serie</th>
+                                <th>Estado serie</th>
+                                <th>Confianza</th>
+                            </tr>
+                        </thead>
+                        <tbody id="invoiceDraftItemsTableBody">
+                            @foreach (data_get($assetInvoiceDraft, 'items', []) as $index => $draftItem)
+                            @php
+                                $rowSerialStatus = Str::lower((string) data_get($draftItem, 'serial_status', 'dudosa'));
+                            @endphp
+                            <tr data-draft-index="{{ $index }}" class="{{ $rowSerialStatus === 'dudosa' ? 'table-warning' : '' }}">
+                                <td>
+                                    <input type="checkbox" class="form-check-input js-draft-include" checked>
+                                </td>
+                                <td>
+                                    <input type="text" class="form-control form-control-sm js-draft-description" value="{{ data_get($draftItem, 'description', '') }}">
+                                </td>
+                                <td>
+                                    <select class="form-select form-select-sm js-draft-equipment-type">
+                                        @foreach ($assetEquipmentTypes as $typeKey => $typeLabel)
+                                            <option value="{{ $typeKey }}" @selected((string) data_get($draftItem, 'equipment_type', 'desktop') === (string) $typeKey)>{{ $typeLabel }}</option>
+                                        @endforeach
+                                    </select>
+                                </td>
+                                <td>
+                                    <input type="text" class="form-control form-control-sm js-draft-brand" value="{{ data_get($draftItem, 'brand', '') }}">
+                                </td>
+                                <td>
+                                    <input type="text" class="form-control form-control-sm js-draft-model" value="{{ data_get($draftItem, 'model', '') }}">
+                                </td>
+                                <td>
+                                    <input type="text" class="form-control form-control-sm js-draft-serial" value="{{ data_get($draftItem, 'serial_number', '') }}">
+                                </td>
+                                <td>
+                                    @php
+                                        $serialStatus = Str::lower((string) data_get($draftItem, 'serial_status', 'dudosa'));
+                                        $serialBadgeClass = $serialStatus === 'validada' ? 'success' : 'warning text-dark';
+                                        $serialStatusLabel = (string) data_get($draftItem, 'serial_status_label', 'Serie dudosa');
+                                        $fieldConfidence = data_get($draftItem, 'field_confidence', []);
+                                        $fieldBadgeClass = function (string $status): string {
+                                            return match (Str::lower($status)) {
+                                                'alta' => 'success',
+                                                'media' => 'warning text-dark',
+                                                default => 'danger',
+                                            };
+                                        };
+                                    @endphp
+                                    <span class="badge text-bg-{{ $serialBadgeClass }} js-draft-serial-status" data-status="{{ $serialStatus }}">{{ $serialStatusLabel }}</span>
+                                </td>
+                                <td>
+                                    <div>{{ (float) data_get($draftItem, 'confidence', 0) }}</div>
+                                    <div class="small mt-1 d-flex flex-wrap gap-1">
+                                        @php
+                                            $descStatus = (string) data_get($fieldConfidence, 'description.status', 'baja');
+                                            $typeStatus = (string) data_get($fieldConfidence, 'equipment_type.status', 'baja');
+                                            $brandStatus = (string) data_get($fieldConfidence, 'brand.status', 'baja');
+                                            $modelStatus = (string) data_get($fieldConfidence, 'model.status', 'baja');
+                                        @endphp
+                                        <span class="badge text-bg-{{ $fieldBadgeClass($descStatus) }} js-draft-field-confidence" data-field="description">Desc {{ data_get($fieldConfidence, 'description.label', 'Baja') }}</span>
+                                        <span class="badge text-bg-{{ $fieldBadgeClass($typeStatus) }} js-draft-field-confidence" data-field="equipment_type">Tipo {{ data_get($fieldConfidence, 'equipment_type.label', 'Baja') }}</span>
+                                        <span class="badge text-bg-{{ $fieldBadgeClass($brandStatus) }} js-draft-field-confidence" data-field="brand">Marca {{ data_get($fieldConfidence, 'brand.label', 'Baja') }}</span>
+                                        <span class="badge text-bg-{{ $fieldBadgeClass($modelStatus) }} js-draft-field-confidence" data-field="model">Modelo {{ data_get($fieldConfidence, 'model.label', 'Baja') }}</span>
+                                    </div>
+                                </td>
+                            </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+
+                <details>
+                    <summary class="small text-primary" style="cursor:pointer;">Ver texto detectado</summary>
+                    <div class="small text-muted border rounded p-2 bg-light mt-2" style="white-space: pre-wrap; max-height: 240px; overflow:auto;">{{ data_get($assetInvoiceDraft, 'raw_excerpt', '') }}</div>
+                </details>
+            </div>
+            <div class="modal-footer">
+                <form method="POST" action="{{ url('/admin/computer-assets/invoice/import') }}" class="row g-2 align-items-end w-100 m-0" id="invoiceDraftImportForm" data-base-draft='@json($assetInvoiceDraft)'>
+                    @csrf
+                    <input type="hidden" name="asset_invoice_payload" value='@json($assetInvoiceDraft)' id="assetInvoicePayloadInput">
+                    <div class="col-md-5">
+                        <label class="form-label small mb-1">Sede destino (opcional)</label>
+                        <select name="asset_invoice_branch_id" class="form-select form-select-sm">
+                            <option value="">Usar sede detectada en borrador</option>
+                            @foreach ($branches as $branch)
+                                <option value="{{ $branch->id }}">{{ $branch->name }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                    <div class="col-md-7 d-flex justify-content-end gap-2">
+                        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
+                        <button type="submit" class="btn btn-success btn-sm">
+                            <i class="bi bi-check-circle"></i> Importar borrador de factura
+                        </button>
+                    </div>
+                </form>
+            </div>
         </div>
     </div>
 </div>
@@ -2913,6 +3242,48 @@ document.addEventListener('DOMContentLoaded', function () {
         font-size: .76rem;
     }
 
+    .inventory-actions {
+        align-items: center;
+    }
+
+    .inventory-action-btn {
+        width: 30px;
+        height: 30px;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .inventory-telemetry-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: .2rem;
+    }
+
+    .inventory-telemetry-badges .badge {
+        padding: .15rem .35rem;
+        font-size: .68rem;
+        line-height: 1.1;
+    }
+
+    @media (max-width: 576px) {
+        #inventoryAssetsTable tbody tr .inventory-telemetry-badges {
+            display: none;
+        }
+
+        #inventoryAssetsTable tbody tr:hover .inventory-telemetry-badges,
+        #inventoryAssetsTable tbody tr:focus-within .inventory-telemetry-badges {
+            display: flex;
+        }
+
+        #inventoryAssetsTable tbody tr .inventory-action-btn,
+        #inventoryAssetsTable tbody tr .js-open-asset-detail.inventory-action-btn {
+            width: 28px;
+            height: 28px;
+        }
+    }
+
     @media (max-width: 992px) {
         #inventoryAssetsTableWrapper {
             max-height: 58vh;
@@ -3429,6 +3800,17 @@ document.addEventListener('DOMContentLoaded', function () {
     const modalReassignCurrentUser = document.getElementById('modalReassignCurrentUser');
     const modalAssetTransferRequestForm = document.getElementById('modalAssetTransferRequestForm');
     const modalAssetTransferRequestSummary = document.getElementById('modalAssetTransferRequestSummary');
+    const modalAssetInvoiceAnalyzer = document.getElementById('modalAssetInvoiceAnalyzer');
+    const assetInvoiceAnalyzerForm = document.getElementById('assetInvoiceAnalyzerForm');
+    const assetInvoiceAnalyzerSubmitButton = document.getElementById('assetInvoiceAnalyzerSubmitButton');
+    const analyzerSubmitLabel = assetInvoiceAnalyzerSubmitButton?.querySelector('.js-analyzer-submit-label');
+    const modalAssetInvoiceDraft = document.getElementById('modalAssetInvoiceDraft');
+    const btnOpenInvoiceDraftModal = document.getElementById('btnOpenInvoiceDraftModal');
+    const invoiceDraftImportForm = document.getElementById('invoiceDraftImportForm');
+    const assetInvoicePayloadInput = document.getElementById('assetInvoicePayloadInput');
+    const invoiceDraftRows = Array.from(document.querySelectorAll('#invoiceDraftItemsTableBody tr[data-draft-index]'));
+    const hasInvoiceDraft = @json($hasInvoiceDraft);
+    const autoOpenInvoiceDraft = @json($autoOpenInvoiceDraft);
     const modalEditEquipmentTypeCatalog = document.getElementById('modalEditEquipmentTypeCatalog');
     const modalEditEquipmentTypeCatalogForm = document.getElementById('modalEditEquipmentTypeCatalogForm');
     const editEquipmentTypeCatalogKey = document.getElementById('editEquipmentTypeCatalogKey');
@@ -3656,6 +4038,7 @@ document.addEventListener('DOMContentLoaded', function () {
         setFieldValue('[name="asset_assigned_user"]', row.dataset.assetAssignedUser || '');
         setFieldValue('[name="asset_notes"]', row.dataset.assetNotes || '');
         setFieldValue('[name="asset_responsiva_reference"]', row.dataset.assetResponsivaReference || '');
+        setFieldValue('[name="asset_purchase_order_number"]', row.dataset.assetPurchaseOrderNumber || '');
         setFieldValue('[name="asset_assignment_invoice_folio"]', row.dataset.assetAssignmentInvoiceFolio || '');
         setFieldValue('[name="asset_assignment_supplier"]', row.dataset.assetAssignmentSupplier || '');
         setFieldValue('[name="asset_assignment_delivery_date"]', row.dataset.assetAssignmentDeliveryDate || '');
@@ -3828,6 +4211,199 @@ document.addEventListener('DOMContentLoaded', function () {
         targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
         targetRow.classList.add('table-warning');
         window.setTimeout(() => targetRow.classList.remove('table-warning'), 2600);
+    };
+
+    const isLikelyDraftSerial = (value) => {
+        const serial = String(value || '').trim().toUpperCase();
+        if (serial.length < 6 || serial.length > 32) return false;
+        if (!/[A-Z]/.test(serial) || !/\d/.test(serial)) return false;
+        if (/^[0-9\-/]+$/.test(serial)) return false;
+        if (/^(I3|I5|I7|I9|DDR4|DDR5|SSD|NVME|HDD|GHZ|MHZ|TB|GB|RAM)$/i.test(serial)) return false;
+        if (/\d+(GB|TB|MHZ|GHZ)$/i.test(serial)) return false;
+        return true;
+    };
+
+    const refreshDraftSerialBadge = (row) => {
+        if (!row) return;
+        const serialInput = row.querySelector('.js-draft-serial');
+        const badge = row.querySelector('.js-draft-serial-status');
+        if (!serialInput || !badge) return;
+
+        const valid = isLikelyDraftSerial(serialInput.value);
+        badge.textContent = valid ? 'Serie validada' : 'Serie dudosa';
+        badge.dataset.status = valid ? 'validada' : 'dudosa';
+        badge.classList.remove('text-bg-success', 'text-bg-warning', 'text-dark');
+        if (valid) {
+            badge.classList.add('text-bg-success');
+            row.classList.remove('table-warning');
+        } else {
+            badge.classList.add('text-bg-warning', 'text-dark');
+            row.classList.add('table-warning');
+        }
+    };
+
+    const scoreToFieldConfidence = (score) => {
+        const safeScore = Math.max(0, Math.min(1, Number(score) || 0));
+        if (safeScore >= 0.8) {
+            return { score: Number(safeScore.toFixed(2)), status: 'alta', label: 'Alta', badgeClass: 'text-bg-success' };
+        }
+
+        if (safeScore >= 0.6) {
+            return { score: Number(safeScore.toFixed(2)), status: 'media', label: 'Media', badgeClass: 'text-bg-warning text-dark' };
+        }
+
+        return { score: Number(safeScore.toFixed(2)), status: 'baja', label: 'Baja', badgeClass: 'text-bg-danger' };
+    };
+
+    const assessDraftDescriptionConfidence = (description) => {
+        const value = String(description || '').trim();
+        if (!value || /^equipo\s+(por\s+validar\s+de\s+)?factura$/i.test(value)) return scoreToFieldConfidence(0.35);
+        if (value.length < 8) return scoreToFieldConfidence(0.55);
+        if (/\b(laptop|desktop|monitor|servidor|server|latitude|thinkpad|optiplex|probook|elitebook|macbook)\b/i.test(value)) return scoreToFieldConfidence(0.9);
+        return scoreToFieldConfidence(0.75);
+    };
+
+    const assessDraftEquipmentTypeConfidence = (description, equipmentType) => {
+        const text = String(description || '').toLowerCase().trim();
+        const type = String(equipmentType || 'desktop').toLowerCase().trim();
+        if (!text || text.includes('equipo por validar de factura')) return scoreToFieldConfidence(0.45);
+
+        const map = {
+            laptop: /\b(laptop|notebook|latitude|thinkpad|probook|elitebook|zbook|ideapad|macbook|vivobook)\b/i,
+            desktop: /\b(desktop|optiplex|prodesk|elitedesk|torre|cpu)\b/i,
+            aio: /\b(all\s*in\s*one|aio|imac)\b/i,
+            monitor: /\b(monitor|display|pantalla)\b/i,
+            server: /\b(server|servidor|poweredge|proliant|thinksystem)\b/i,
+        };
+
+        if (map[type] && map[type].test(description)) return scoreToFieldConfidence(0.88);
+        return scoreToFieldConfidence(type === 'desktop' ? 0.58 : 0.65);
+    };
+
+    const assessDraftBrandConfidence = (brand) => {
+        const value = String(brand || '').trim();
+        return scoreToFieldConfidence(value ? 0.92 : 0.35);
+    };
+
+    const assessDraftModelConfidence = (model) => {
+        const value = String(model || '').trim();
+        if (!value) return scoreToFieldConfidence(0.35);
+        if (value.length < 4) return scoreToFieldConfidence(0.55);
+        if (/\b(latitude|thinkpad|optiplex|probook|elitebook|prodesk|zbook|ideapad|macbook|vivobook|\d{3,4}\s*[a-z]\d?)\b/i.test(value)) return scoreToFieldConfidence(0.9);
+        return scoreToFieldConfidence(0.74);
+    };
+
+    const computeDraftFieldConfidence = ({ description, equipmentType, brand, model }) => {
+        const descriptionScore = assessDraftDescriptionConfidence(description);
+        const equipmentTypeScore = assessDraftEquipmentTypeConfidence(description, equipmentType);
+        const brandScore = assessDraftBrandConfidence(brand);
+        const modelScore = assessDraftModelConfidence(model);
+
+        return {
+            description: { score: descriptionScore.score, status: descriptionScore.status, label: descriptionScore.label },
+            equipment_type: { score: equipmentTypeScore.score, status: equipmentTypeScore.status, label: equipmentTypeScore.label },
+            brand: { score: brandScore.score, status: brandScore.status, label: brandScore.label },
+            model: { score: modelScore.score, status: modelScore.status, label: modelScore.label },
+        };
+    };
+
+    const refreshDraftFieldConfidenceBadges = (row) => {
+        if (!row) return;
+
+        const description = String(row.querySelector('.js-draft-description')?.value || '').trim();
+        const equipmentType = String(row.querySelector('.js-draft-equipment-type')?.value || 'desktop').trim();
+        const brand = String(row.querySelector('.js-draft-brand')?.value || '').trim();
+        const model = String(row.querySelector('.js-draft-model')?.value || '').trim();
+
+        const result = computeDraftFieldConfidence({ description, equipmentType, brand, model });
+        row.querySelectorAll('.js-draft-field-confidence[data-field]').forEach((badge) => {
+            const field = String(badge.dataset.field || '').trim();
+            const confidence = result[field];
+            if (!confidence) return;
+
+            badge.classList.remove('text-bg-success', 'text-bg-warning', 'text-bg-danger', 'text-dark');
+            if (confidence.status === 'alta') {
+                badge.classList.add('text-bg-success');
+            } else if (confidence.status === 'media') {
+                badge.classList.add('text-bg-warning', 'text-dark');
+            } else {
+                badge.classList.add('text-bg-danger');
+            }
+
+            const prefix = field === 'description' ? 'Desc'
+                : field === 'equipment_type' ? 'Tipo'
+                : field === 'brand' ? 'Marca'
+                : 'Modelo';
+            badge.textContent = `${prefix} ${confidence.label}`;
+        });
+    };
+
+    const buildEditedInvoicePayload = () => {
+        if (!invoiceDraftImportForm) return null;
+        const baseRaw = String(invoiceDraftImportForm.dataset.baseDraft || '').trim();
+        if (!baseRaw) return null;
+
+        let baseDraft = null;
+        try {
+            baseDraft = JSON.parse(baseRaw);
+        } catch (error) {
+            return null;
+        }
+
+        if (!baseDraft || typeof baseDraft !== 'object') return null;
+
+        const baseItems = Array.isArray(baseDraft.items) ? baseDraft.items : [];
+        const editedItems = [];
+
+        invoiceDraftRows.forEach((row) => {
+            const include = row.querySelector('.js-draft-include');
+            if (include && !include.checked) return;
+
+            const index = Number(row.dataset.draftIndex || '-1');
+            const baseItem = Number.isFinite(index) && index >= 0 ? (baseItems[index] || {}) : {};
+            const serialInput = row.querySelector('.js-draft-serial');
+            const descriptionInput = row.querySelector('.js-draft-description');
+            const typeSelect = row.querySelector('.js-draft-equipment-type');
+            const brandInput = row.querySelector('.js-draft-brand');
+            const modelInput = row.querySelector('.js-draft-model');
+
+            const serialNumber = String(serialInput?.value || '').trim().toUpperCase();
+            const isValidSerial = isLikelyDraftSerial(serialNumber);
+            const description = String(descriptionInput?.value || '').trim();
+            const equipmentType = String(typeSelect?.value || baseItem.equipment_type || 'desktop').trim();
+            const brand = String(brandInput?.value || '').trim() || null;
+            const model = String(modelInput?.value || '').trim() || null;
+            const fieldConfidence = computeDraftFieldConfidence({
+                description,
+                equipmentType,
+                brand,
+                model,
+            });
+            const serialConfidenceScore = isValidSerial ? 0.92 : 0.35;
+            const overallConfidence = Number((((fieldConfidence.description.score || 0)
+                + (fieldConfidence.equipment_type.score || 0)
+                + (fieldConfidence.brand.score || 0)
+                + (fieldConfidence.model.score || 0)
+                + serialConfidenceScore) / 5).toFixed(2));
+
+            editedItems.push({
+                ...baseItem,
+                description,
+                equipment_type: equipmentType,
+                brand,
+                model,
+                serial_number: serialNumber || null,
+                serial_status: isValidSerial ? 'validada' : 'dudosa',
+                serial_status_label: isValidSerial ? 'Serie validada' : 'Serie dudosa',
+                field_confidence: fieldConfidence,
+                confidence: overallConfidence,
+            });
+        });
+
+        return {
+            ...baseDraft,
+            items: editedItems,
+        };
     };
 
     const renderInventoryFilterChips = () => {
@@ -4212,6 +4788,85 @@ document.addEventListener('DOMContentLoaded', function () {
     applyTransferHistoryFilters();
     activateTabFromHash();
     focusAssetFromUrl();
+
+    invoiceDraftRows.forEach((row) => {
+        const serialInput = row.querySelector('.js-draft-serial');
+        const descriptionInput = row.querySelector('.js-draft-description');
+        const typeSelect = row.querySelector('.js-draft-equipment-type');
+        const brandInput = row.querySelector('.js-draft-brand');
+        const modelInput = row.querySelector('.js-draft-model');
+
+        if (serialInput) {
+            serialInput.addEventListener('input', () => refreshDraftSerialBadge(row));
+        }
+
+        [descriptionInput, typeSelect, brandInput, modelInput].forEach((control) => {
+            if (!control) return;
+            control.addEventListener('input', () => refreshDraftFieldConfidenceBadges(row));
+            control.addEventListener('change', () => refreshDraftFieldConfidenceBadges(row));
+        });
+
+        refreshDraftSerialBadge(row);
+        refreshDraftFieldConfidenceBadges(row);
+    });
+
+    invoiceDraftImportForm?.addEventListener('submit', (event) => {
+        const payload = buildEditedInvoicePayload();
+        if (!payload || !assetInvoicePayloadInput) {
+            event.preventDefault();
+            alert('No fue posible construir el borrador editado.');
+            return;
+        }
+
+        if (!Array.isArray(payload.items) || payload.items.length === 0) {
+            event.preventDefault();
+            alert('Selecciona al menos un equipo para importar.');
+            return;
+        }
+
+        assetInvoicePayloadInput.value = JSON.stringify(payload);
+    });
+
+    assetInvoiceAnalyzerForm?.addEventListener('submit', () => {
+        if (assetInvoiceAnalyzerSubmitButton) {
+            assetInvoiceAnalyzerSubmitButton.disabled = true;
+            if (analyzerSubmitLabel) {
+                analyzerSubmitLabel.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Analizando...';
+            } else {
+                assetInvoiceAnalyzerSubmitButton.textContent = 'Analizando...';
+            }
+        }
+
+        if (window.bootstrap?.Modal && modalAssetInvoiceAnalyzer) {
+            const analyzerModal = window.bootstrap.Modal.getOrCreateInstance(modalAssetInvoiceAnalyzer);
+            analyzerModal.hide();
+        }
+    });
+
+    if (hasInvoiceDraft && autoOpenInvoiceDraft && modalAssetInvoiceDraft) {
+        let attempts = 0;
+        const maxAttempts = 20;
+        const openDraftModalWhenReady = () => {
+            attempts += 1;
+
+            if (window.bootstrap?.Modal) {
+                const draftModal = window.bootstrap.Modal.getOrCreateInstance(modalAssetInvoiceDraft);
+                draftModal.show();
+                return;
+            }
+
+            if (btnOpenInvoiceDraftModal) {
+                btnOpenInvoiceDraftModal.click();
+                return;
+            }
+
+            if (attempts < maxAttempts) {
+                window.setTimeout(openDraftModalWhenReady, 120);
+            }
+        };
+
+        window.setTimeout(openDraftModalWhenReady, 180);
+    }
 })();
 </script>
 @endpush
