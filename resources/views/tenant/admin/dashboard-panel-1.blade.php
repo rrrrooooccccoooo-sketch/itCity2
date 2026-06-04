@@ -2,13 +2,14 @@
 
 @section('content')
 @php
-    $canInventoryManage = auth()->user()?->hasTenantPermission('inventory.manage') ?? false;
-    $canInventoryView   = $canInventoryManage || (auth()->user()?->hasTenantPermission('inventory.view') ?? false);
-    $canTopologyManage  = auth()->user()?->hasTenantPermission('topology.manage') ?? false;
-    $canTopologyView    = $canTopologyManage || (auth()->user()?->hasTenantPermission('topology.view') ?? false);
-    $canMonitoringView  = auth()->user()?->hasTenantPermission('monitoring.view') ?? false;
-    $canInventoryCatalogsView = (auth()->user()?->hasTenantPermission('inventory.catalogs.view') ?? false) || $canInventoryManage;
-    $canInventoryCatalogsManage = (auth()->user()?->hasTenantPermission('inventory.catalogs.manage') ?? false) || $canInventoryManage;
+    $user = auth()->user();
+    $canInventoryManage = $user ? ($user->hasTenantPermission('inventory.manage') ?? false) : false;
+    $canInventoryView   = $user ? ($canInventoryManage || ($user->hasTenantPermission('inventory.view') ?? false)) : false;
+    $canTopologyManage  = $user ? ($user->hasTenantPermission('topology.manage') ?? false) : false;
+    $canTopologyView    = $user ? ($canTopologyManage || ($user->hasTenantPermission('topology.view') ?? false)) : false;
+    $canMonitoringView  = $user ? ($user->hasTenantPermission('monitoring.view') ?? false) : false;
+    $canInventoryCatalogsView = $user ? ((($user->hasTenantPermission('inventory.catalogs.view') ?? false) || $canInventoryManage)) : false;
+    $canInventoryCatalogsManage = $user ? ((($user->hasTenantPermission('inventory.catalogs.manage') ?? false) || $canInventoryManage)) : false;
     $incomingTransferPendingCount = isset($incomingTransferRequests) ? (int) $incomingTransferRequests->count() : 0;
     $outgoingTransferPendingCount = isset($outgoingTransferRequests) ? (int) $outgoingTransferRequests->count() : 0;
     $transferHistoryCount = isset($transferRequestHistory) ? (int) $transferRequestHistory->count() : 0;
