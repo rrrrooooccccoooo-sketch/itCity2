@@ -86,6 +86,7 @@ Route::middleware([
             Route::get('/responsiva/verify', [AdminController::class, 'verifyComputerAssetResponsiva']);
             Route::get('/computer-assets/{computerAsset}/responsiva/preview', [AdminController::class, 'previewComputerAssetResponsiva']);
             Route::get('/computer-assets/{computerAsset}/assignment-log', [AdminController::class, 'showComputerAssetAssignmentLog']);
+            Route::get('/computer-assets/{computerAsset}/invoice-document', [AdminController::class, 'downloadComputerAssetInvoiceDocument']);
         });
 
         Route::get('/users', [AdminController::class, 'indexUsers'])->middleware('tenant.can:users.view');

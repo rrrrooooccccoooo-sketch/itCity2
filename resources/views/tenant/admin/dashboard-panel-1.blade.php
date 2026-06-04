@@ -1320,6 +1320,15 @@
                                 placeholder="Etiqueta, hostname, IP, serie, software..."
                             >
                         </div>
+                        <div class="col-md-3">
+                            <label class="form-label small mb-1">Factura</label>
+                            <input
+                                type="text"
+                                id="inventoryAssetFilterInvoiceFolio"
+                                class="form-control form-control-sm"
+                                placeholder="Número de factura..."
+                            >
+                        </div>
                         <div class="col-md-2">
                             <label class="form-label small mb-1">Tipo</label>
                             <select id="inventoryAssetFilterType" class="form-select form-select-sm">
@@ -1513,6 +1522,7 @@
                                         ->filter(fn ($entry) => is_array($entry))
                                         ->values()
                                         ->last() ?? [];
+                                    $assetInvoiceFolio = trim((string) data_get($asset->details, 'procurement.invoice_folio', '')) ?: trim((string) data_get($latestAssignmentLog, 'invoice_folio', ''));
                                     $assetSearchIndex = Str::lower(collect([
                                         $asset->asset_tag,
                                         $asset->hostname,
@@ -1525,8 +1535,10 @@
                                         optional($asset->branch)->name,
                                         $assetEquipmentTypes[$asset->equipment_type] ?? $asset->equipment_type,
                                         $asset->status,
+                                        $assetInvoiceFolio,
                                         $assetSoftwareIndex,
                                     ])->filter()->join(' '));
+                                    $hasInvoiceDocument = trim((string) data_get($asset->details, 'procurement.invoice_document.path', '')) !== '';
                                 @endphp
                                 <tr
                                     data-filter-row="asset"
@@ -1552,6 +1564,7 @@
                                     data-asset-notes="{{ $asset->notes ?? '' }}"
                                     data-asset-responsiva-reference="{{ data_get($asset->details, 'responsiva.reference', '') }}"
                                     data-asset-purchase-order-number="{{ data_get($asset->details, 'procurement.purchase_order_number', '') }}"
+                                    data-asset-invoice-folio="{{ $assetInvoiceFolio }}"
                                     data-asset-assignment-invoice-folio="{{ data_get($latestAssignmentLog, 'invoice_folio', '') }}"
                                     data-asset-assignment-supplier="{{ data_get($latestAssignmentLog, 'supplier', '') }}"
                                     data-asset-assignment-delivery-date="{{ data_get($latestAssignmentLog, 'assigned_at', '') }}"
@@ -1637,12 +1650,17 @@
                                             <a href="{{ url('/admin/computer-assets/' . $asset->id . '/assignment-log') }}" class="btn btn-sm btn-outline-secondary inventory-action-btn" target="_blank" rel="noopener" aria-label="Abrir bitácora" data-bs-toggle="tooltip" title="Bitácora">
                                                 <i class="bi bi-journal-text" aria-hidden="true"></i>
                                             </a>
+                                            @if ($hasInvoiceDocument)
+                                            <a href="{{ url('/admin/computer-assets/' . $asset->id . '/invoice-document') }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary inventory-action-btn" aria-label="Ver factura" data-bs-toggle="tooltip" title="Ver factura">
+                                                <i class="bi bi-receipt" aria-hidden="true"></i>
+                                            </a>
+                                            @endif
                                             @if ($canInventoryManage)
                                             <button type="button" class="btn btn-sm btn-outline-info js-request-transfer-asset inventory-action-btn" data-bs-toggle="modal" data-bs-target="#modalAssetTransferRequest" aria-label="Solicitar traslado" title="Solicitar traslado">
                                                 <i class="bi bi-send" aria-hidden="true"></i>
                                             </button>
                                             <button type="button" class="btn btn-sm btn-outline-warning js-reassign-asset inventory-action-btn" data-bs-toggle="modal" data-bs-target="#modalAssetReassign" aria-label="Reasignar activo" title="Reasignar">
-                                                <i class="bi bi-arrow-left-right" aria-hidden="true"></i>
+                                                <i class="bi bi-arrow-left-right text-dark" aria-hidden="true"></i>
                                             </button>
                                             <button type="button" class="btn btn-sm btn-outline-primary js-edit-asset inventory-action-btn" data-bs-toggle="modal" data-bs-target="#modalAsset" aria-label="Editar activo" title="Editar">
                                                 <i class="bi bi-pencil" aria-hidden="true"></i>
@@ -2318,7 +2336,7 @@
                 </div>
                 <div class="modal-body">
                     <div class="alert alert-info small mb-3">
-                        Usa el layout CSV para cargar equipos en estado <strong>Pendiente de asignación</strong>. La lectura automática de factura puede agregarse después como una fase aparte.
+                        Puedes cargar CSV o Excel. El sistema toma <strong>numero_serie</strong> como llave primaria: si existe, actualiza; si no existe, crea un nuevo activo.
                     </div>
                     <div class="row g-3">
                         <div class="col-md-6">
@@ -2326,19 +2344,29 @@
                             <select name="asset_import_branch_id" class="form-select">
                                 <option value="">Usar la sede indicada en el layout</option>
                                 @foreach ($branches as $branch)
-                                    <option value="{{ $branch->id }}">{{ $branch->name }}</option>
+                                    <option value="{{ $branch->id }}" {{ (string) old('asset_import_branch_id', $currentContextBranchId ?? '') === (string) $branch->id ? 'selected' : '' }}>{{ $branch->name }}</option>
                                 @endforeach
                             </select>
                         </div>
                         <div class="col-md-6 d-flex align-items-end">
                             <a href="{{ url('/admin/computer-assets/import-template') }}" class="btn btn-outline-secondary w-100">
-                                Descargar layout CSV
+                                Descargar layout base
                             </a>
                         </div>
                         <div class="col-12">
-                            <label class="form-label">Archivo CSV</label>
-                            <input type="file" name="asset_import_file" class="form-control" accept=".csv,.txt,text/csv" required>
-                            <div class="form-text">Columnas sugeridas (layout en español): sede_id, tipo_equipo, etiqueta, hostname, numero_serie, marca, modelo, procesador, ram_gb, tipo_almacenamiento, almacenamiento_gb, sistema_operativo, version_office, numero_orden_compra, proveedor, fecha_compra, garantia_hasta, observaciones.</div>
+                            <label class="form-label">Archivo de layout</label>
+                            <input type="file" name="asset_import_file" class="form-control" accept=".csv,.txt,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
+                            <div class="form-text">Columnas sugeridas: sede_id, tipo_equipo, etiqueta, hostname, numero_serie, marca, modelo, procesador, ram_gb, tipo_almacenamiento, almacenamiento_gb, sistema_operativo, version_office, numero_orden_compra, proveedor, fecha_compra, garantia_hasta, observaciones. Las columnas adicionales se guardan como metadatos del activo.</div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Factura física (opcional, se vincula a todos los equipos del archivo)</label>
+                            <input type="file" name="asset_import_invoice_file" class="form-control" accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp">
+                            <div class="form-text">Después podrás consultarla desde cada equipo contenido en esta carga.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Número de factura (opcional)</label>
+                            <input type="text" name="asset_import_invoice_folio" class="form-control" maxlength="120" placeholder="Ej. FAC-2026-00122">
+                            <div class="form-text">Se guardará en los equipos importados y podrá filtrarse en el inventario.</div>
                         </div>
                     </div>
                 </div>
@@ -3771,6 +3799,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     const inventoryFilterSearch = document.getElementById('inventoryAssetFilterSearch');
+    const inventoryFilterInvoiceFolio = document.getElementById('inventoryAssetFilterInvoiceFolio');
     const inventoryFilterType = document.getElementById('inventoryAssetFilterType');
     const inventoryFilterStatus = document.getElementById('inventoryAssetFilterStatus');
     const inventoryFilterBranch = document.getElementById('inventoryAssetFilterBranch');
@@ -4471,6 +4500,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const type = normalizeFilterValue(inventoryFilterType?.value || '');
         const status = normalizeFilterValue(inventoryFilterStatus?.value || '');
         const branch = normalizeFilterValue(inventoryFilterBranch?.value || '');
+        const invoiceFolio = normalizeFilterValue(inventoryFilterInvoiceFolio?.value || '');
         const software = normalizeFilterValue(inventoryFilterSoftware?.value || '');
         const softwareMode = normalizeFilterValue(inventoryFilterSoftwareMode?.value || 'contains');
         const brand = normalizeFilterValue(inventoryFilterBrand?.value || '');
@@ -4486,6 +4516,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const rowType = normalizeFilterValue(row.dataset.type || '');
             const rowStatus = normalizeFilterValue(row.dataset.status || '');
             const rowBranch = normalizeFilterValue(row.dataset.branch || '');
+            const rowInvoiceFolio = normalizeFilterValue(row.dataset.assetInvoiceFolio || '');
             const rowSoftware = normalizeFilterValue(row.dataset.software || '');
             const rowSoftwareExactTerms = String(row.dataset.softwareExact || '')
                 .split('||')
@@ -4505,6 +4536,7 @@ document.addEventListener('DOMContentLoaded', function () {
                         : rowSoftware.includes(software));
 
             const matches = (!query || rowSearch.includes(query))
+                && (!invoiceFolio || rowInvoiceFolio.includes(invoiceFolio))
                 && (!type || rowType === type)
                 && (!status || rowStatus === status)
                 && (!branch || rowBranch === branch)
@@ -4562,7 +4594,7 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
-    [inventoryFilterSearch, inventoryFilterType, inventoryFilterStatus, inventoryFilterBranch, inventoryFilterSoftware, inventoryFilterBrand, inventoryFilterModel, inventoryFilterRamMin, inventoryFilterStorageMin, inventoryFilterSeenFrom, inventoryFilterSeenTo].forEach((control) => {
+    [inventoryFilterSearch, inventoryFilterInvoiceFolio, inventoryFilterType, inventoryFilterStatus, inventoryFilterBranch, inventoryFilterSoftware, inventoryFilterBrand, inventoryFilterModel, inventoryFilterRamMin, inventoryFilterStorageMin, inventoryFilterSeenFrom, inventoryFilterSeenTo].forEach((control) => {
         if (!control) return;
         control.addEventListener('input', applyInventoryFilters);
         control.addEventListener('change', applyInventoryFilters);
@@ -4645,6 +4677,7 @@ document.addEventListener('DOMContentLoaded', function () {
     if (inventoryFilterReset) {
         inventoryFilterReset.addEventListener('click', () => {
             if (inventoryFilterSearch) inventoryFilterSearch.value = '';
+            if (inventoryFilterInvoiceFolio) inventoryFilterInvoiceFolio.value = '';
             if (inventoryFilterType) inventoryFilterType.value = '';
             if (inventoryFilterStatus) inventoryFilterStatus.value = '';
             if (inventoryFilterBranch) inventoryFilterBranch.value = '';

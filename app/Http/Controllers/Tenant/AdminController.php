@@ -40,6 +40,8 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
+use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
 use Smalot\PdfParser\Parser as PdfParser;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
 use Symfony\Component\Process\Process;
@@ -2957,86 +2959,111 @@ SVG;
     {
         $validated = $request->validate([
             'asset_import_branch_id' => ['nullable', 'exists:branches,id'],
-            'asset_import_file' => ['required', 'file', 'max:10240', 'mimes:csv,txt'],
+            'asset_import_file' => ['required', 'file', 'max:20480', 'mimes:csv,txt,xlsx,xls'],
+            'asset_import_invoice_folio' => ['nullable', 'string', 'max:120'],
+            'asset_import_invoice_file' => ['nullable', 'file', 'max:20480', 'mimes:pdf,jpg,jpeg,png,webp'],
         ]);
 
-        $defaultBranchId = isset($validated['asset_import_branch_id']) ? (int) $validated['asset_import_branch_id'] : null;
+        $scopeIds = $this->currentUserBranchScopeIds($request);
+        $requestedContextBranchId = (int) ($this->resolveAdminContextBranchId($request) ?? 0);
+        $contextBranchId = $requestedContextBranchId > 0 ? $requestedContextBranchId : null;
+        if ($contextBranchId !== null && $scopeIds !== null && !in_array($contextBranchId, $scopeIds, true)) {
+            $contextBranchId = null;
+        }
+
+        $implicitScopeBranchId = ($scopeIds !== null && count($scopeIds) === 1)
+            ? (int) ($scopeIds[0] ?? 0)
+            : null;
+
+        $defaultBranchId = isset($validated['asset_import_branch_id'])
+            ? (int) $validated['asset_import_branch_id']
+            : ($contextBranchId ?? $implicitScopeBranchId);
+
         $file = $request->file('asset_import_file');
         if (!$file) {
             throw ValidationException::withMessages([
-                'asset_import_file' => 'Debes seleccionar un archivo CSV.',
+                'asset_import_file' => 'Debes seleccionar un archivo de importación.',
             ]);
         }
 
-        $filePath = $file->getRealPath();
-        if (!$filePath || !is_file($filePath)) {
+        $sheet = $this->parseAssetImportFile($file);
+        $headers = $sheet['headers'];
+        $rows = $sheet['rows'];
+
+        if ($headers === []) {
             throw ValidationException::withMessages([
-                'asset_import_file' => 'No fue posible leer el archivo cargado.',
+                'asset_import_file' => 'El archivo debe incluir una fila de encabezados.',
             ]);
         }
 
-        $handle = fopen($filePath, 'rb');
-        if ($handle === false) {
-            throw ValidationException::withMessages([
-                'asset_import_file' => 'No fue posible abrir el archivo cargado.',
-            ]);
-        }
+        $invoiceDocument = $this->storeAssetImportInvoiceDocument($request->file('asset_import_invoice_file'));
 
-        $delimiter = $this->detectCsvDelimiter((string) (fgets($handle) ?: ''));
-        rewind($handle);
-
-        $headerRow = fgetcsv($handle, 0, $delimiter);
-        if (!is_array($headerRow) || $headerRow === []) {
-            fclose($handle);
-
-            throw ValidationException::withMessages([
-                'asset_import_file' => 'El CSV debe incluir una fila de encabezados.',
-            ]);
-        }
-
-        $headers = array_map(fn ($header) => $this->normalizeImportHeader((string) $header), $headerRow);
         $created = 0;
+        $updated = 0;
         $skipped = 0;
         $errors = [];
-        $scopeIds = $this->currentUserBranchScopeIds($request);
 
-        DB::transaction(function () use ($handle, $delimiter, $headers, $defaultBranchId, $scopeIds, &$created, &$skipped, &$errors): void {
+        DB::transaction(function () use ($rows, $headers, $defaultBranchId, $contextBranchId, $implicitScopeBranchId, $scopeIds, $invoiceDocument, $validated, &$created, &$updated, &$skipped, &$errors): void {
             $lineNumber = 1;
 
-            while (($row = fgetcsv($handle, 0, $delimiter)) !== false) {
+            foreach ($rows as $row) {
                 $lineNumber += 1;
 
-                if ($row === [null] || $row === [] || $this->importCsvRowIsEmpty($row)) {
+                if (!is_array($row) || $row === [null] || $row === [] || $this->importCsvRowIsEmpty($row)) {
                     $skipped += 1;
                     continue;
                 }
 
                 $data = $this->combineImportCsvRow($headers, $row);
-                $branchId = $this->parseImportInteger($data['branch_id'] ?? null) ?? $defaultBranchId;
+                $serialNumber = $this->normalizeImportSerial($data['serial_number'] ?? null);
+                if ($serialNumber === null) {
+                    $errors[] = 'Fila ' . $lineNumber . ': falta numero_serie (llave primaria de actualización).';
+                    $skipped += 1;
+                    continue;
+                }
+
+                $asset = ComputerAsset::query()
+                    ->whereRaw('LOWER(serial_number) = ?', [mb_strtolower($serialNumber)])
+                    ->first();
+
+                $branchId = $this->resolveImportBranchId(
+                    branchIdValue: $data['branch_id'] ?? null,
+                    branchNameValue: $data['branch_name'] ?? null,
+                    branchScopeIds: $scopeIds
+                )
+                    ?? $defaultBranchId
+                    ?? $contextBranchId
+                    ?? $implicitScopeBranchId
+                    ?? ($asset?->branch_id !== null ? (int) $asset->branch_id : null);
+
+                if ($asset && $scopeIds !== null && !in_array((int) $asset->branch_id, $scopeIds, true)) {
+                    $errors[] = 'Fila ' . $lineNumber . ': el activo con serie ' . $serialNumber . ' no pertenece al alcance actual.';
+                    $skipped += 1;
+                    continue;
+                }
+
                 if ($branchId === null) {
                     $errors[] = 'Fila ' . $lineNumber . ': falta branch_id y no se seleccionó una sede por defecto.';
+                    $skipped += 1;
                     continue;
                 }
 
                 if ($scopeIds !== null && !in_array($branchId, $scopeIds, true)) {
                     $errors[] = 'Fila ' . $lineNumber . ': la sede indicada no pertenece al alcance actual.';
+                    $skipped += 1;
                     continue;
                 }
 
                 if (!Branch::query()->whereKey($branchId)->exists()) {
                     $errors[] = 'Fila ' . $lineNumber . ': la sede indicada no existe.';
+                    $skipped += 1;
                     continue;
                 }
 
-                $equipmentType = trim((string) ($data['equipment_type'] ?? 'desktop'));
-                if ($equipmentType === '') {
-                    $equipmentType = 'desktop';
-                }
-
-                if (!array_key_exists($equipmentType, ComputerAsset::equipmentTypeOptions())) {
-                    $errors[] = 'Fila ' . $lineNumber . ': tipo de equipo inválido.';
-                    continue;
-                }
+                [$equipmentType, $usedEquipmentTypeFallback, $rawUnmappedEquipmentType] = $this->resolveImportEquipmentType(
+                    $data['equipment_type'] ?? null,
+                    $asset?->equipment_type
+                );
 
                 $purchaseOrderNumber = $this->normalizeImportText($data['purchase_order_number'] ?? null);
                 $supplier = $this->normalizeImportText($data['supplier'] ?? null);
@@ -3047,43 +3074,112 @@ SVG;
                     ? 'pending_assignment'
                     : (array_key_exists('stock', $statusOptions) ? 'stock' : array_key_first($statusOptions));
 
-                $details = [];
-                if ($purchaseOrderNumber !== '' || $supplier !== '') {
-                    data_set($details, 'procurement.purchase_order_number', $purchaseOrderNumber !== '' ? $purchaseOrderNumber : null);
-                    data_set($details, 'procurement.supplier', $supplier !== '' ? $supplier : null);
+                $details = is_array($asset?->details) ? $asset->details : [];
+                if ($usedEquipmentTypeFallback && $rawUnmappedEquipmentType !== null) {
+                    data_set($details, 'import.unmapped_equipment_type', $rawUnmappedEquipmentType);
+                }
+                if ($purchaseOrderNumber !== null || $supplier !== null) {
+                    data_set($details, 'procurement.purchase_order_number', $purchaseOrderNumber);
+                    data_set($details, 'procurement.supplier', $supplier);
                 }
 
-                data_set($details, 'import.source', 'csv_layout');
+                $invoiceFolio = $this->normalizeImportText($data['invoice_folio'] ?? null);
+                $importInvoiceFolio = $this->normalizeImportText($validated['asset_import_invoice_folio'] ?? null);
+                if ($importInvoiceFolio !== null || $invoiceFolio !== null) {
+                    data_set($details, 'procurement.invoice_folio', $importInvoiceFolio ?? $invoiceFolio);
+                }
+
+                if ($invoiceDocument !== null) {
+                    data_set($details, 'procurement.invoice_document', $invoiceDocument);
+                }
+
+                $this->mergeImportExtraColumnsIntoDetails($details, $data);
+
+                data_set($details, 'import.source', 'spreadsheet_layout');
                 data_set($details, 'import.imported_at', now()->toIso8601String());
 
-                ComputerAsset::query()->create([
+                $payload = [
                     'branch_id' => $branchId,
                     'equipment_type' => $equipmentType,
-                    'asset_tag' => $this->normalizeImportText($data['asset_tag'] ?? null),
-                    'hostname' => $this->normalizeImportText($data['hostname'] ?? null),
-                    'serial_number' => $this->normalizeImportText($data['serial_number'] ?? null),
-                    'brand' => $this->normalizeImportText($data['brand'] ?? null),
-                    'model' => $this->normalizeImportText($data['model'] ?? null),
-                    'cpu' => $this->normalizeImportText($data['cpu'] ?? null),
-                    'ram_gb' => $this->parseImportInteger($data['ram_gb'] ?? null),
-                    'storage_type' => $this->normalizeImportText($data['storage_type'] ?? null),
-                    'storage_gb' => $this->parseImportInteger($data['storage_gb'] ?? null),
-                    'operating_system' => $this->normalizeImportText($data['operating_system'] ?? null),
-                    'office_version' => $this->normalizeImportText($data['office_version'] ?? null),
-                    'purchase_date' => $purchaseDate,
-                    'warranty_expires_at' => $warrantyExpiresAt,
-                    'status' => $pendingStatus,
-                    'notes' => $this->normalizeImportText($data['notes'] ?? null),
+                    'serial_number' => $serialNumber,
                     'details' => $details,
-                ]);
+                ];
 
-                $created += 1;
+                $assetTag = $this->normalizeImportText($data['asset_tag'] ?? null);
+                if ($assetTag !== null) {
+                    $payload['asset_tag'] = $assetTag;
+                }
+
+                $hostname = $this->normalizeImportText($data['hostname'] ?? null);
+                if ($hostname !== null) {
+                    $payload['hostname'] = $hostname;
+                }
+
+                $brand = $this->normalizeImportText($data['brand'] ?? null);
+                if ($brand !== null) {
+                    $payload['brand'] = $brand;
+                }
+
+                $model = $this->normalizeImportText($data['model'] ?? null);
+                if ($model !== null) {
+                    $payload['model'] = $model;
+                }
+
+                $cpu = $this->normalizeImportText($data['cpu'] ?? null);
+                if ($cpu !== null) {
+                    $payload['cpu'] = $cpu;
+                }
+
+                $ramGb = $this->parseImportInteger($data['ram_gb'] ?? null);
+                if ($ramGb !== null) {
+                    $payload['ram_gb'] = $ramGb;
+                }
+
+                $storageType = $this->normalizeImportText($data['storage_type'] ?? null);
+                if ($storageType !== null) {
+                    $payload['storage_type'] = $storageType;
+                }
+
+                $storageGb = $this->parseImportInteger($data['storage_gb'] ?? null);
+                if ($storageGb !== null) {
+                    $payload['storage_gb'] = $storageGb;
+                }
+
+                $operatingSystem = $this->normalizeImportText($data['operating_system'] ?? null);
+                if ($operatingSystem !== null) {
+                    $payload['operating_system'] = $operatingSystem;
+                }
+
+                $officeVersion = $this->normalizeImportText($data['office_version'] ?? null);
+                if ($officeVersion !== null) {
+                    $payload['office_version'] = $officeVersion;
+                }
+
+                if ($purchaseDate !== null) {
+                    $payload['purchase_date'] = $purchaseDate;
+                }
+
+                if ($warrantyExpiresAt !== null) {
+                    $payload['warranty_expires_at'] = $warrantyExpiresAt;
+                }
+
+                $notes = $this->normalizeImportText($data['notes'] ?? null);
+                if ($notes !== null) {
+                    $payload['notes'] = $notes;
+                }
+
+                if ($asset) {
+                    $asset->update($payload);
+                    $updated += 1;
+                } else {
+                    $payload['status'] = $pendingStatus;
+                    ComputerAsset::query()->create($payload);
+                    $created += 1;
+                }
             }
         });
 
-        fclose($handle);
-
-        $message = sprintf('Importación finalizada. Creados: %d, omitidos: %d.', $created, $skipped);
+        $message = sprintf('Importación finalizada. Creados: %d, actualizados: %d, omitidos: %d.', $created, $updated, $skipped);
         if (!empty($errors)) {
             $message .= ' ' . implode(' ', array_slice($errors, 0, 5));
         }
@@ -3091,6 +3187,46 @@ SVG;
         return redirect()
             ->to($this->adminBaseUrlWithContext($request) . '#section-assets')
             ->with('status', $message);
+    }
+
+    public function downloadComputerAssetInvoiceDocument(Request $request, ComputerAsset $computerAsset)
+    {
+        $this->ensureComputerAssetAccessScope($request, $computerAsset);
+
+        $details = is_array($computerAsset->details) ? $computerAsset->details : [];
+        $path = trim((string) data_get($details, 'procurement.invoice_document.path', ''));
+        $disk = trim((string) data_get($details, 'procurement.invoice_document.disk', 'public'));
+
+        if ($path === '' || !Storage::disk($disk)->exists($path)) {
+            return redirect()
+                ->to($this->adminBaseUrlWithContext($request) . '#section-assets')
+                ->with('status', 'No se encontró una factura física asociada a este equipo.');
+        }
+
+        $downloadName = trim((string) data_get($details, 'procurement.invoice_document.original_name', ''));
+        if ($downloadName === '') {
+            $downloadName = 'factura-activo-' . $computerAsset->id;
+        }
+
+        $stream = Storage::disk($disk)->readStream($path);
+        if ($stream === false) {
+            return redirect()
+                ->to($this->adminBaseUrlWithContext($request) . '#section-assets')
+                ->with('status', 'No se pudo leer la factura física asociada a este equipo.');
+        }
+
+        $mimeType = Storage::disk($disk)->mimeType($path) ?? 'application/octet-stream';
+        $headers = [
+            'Content-Type' => $mimeType,
+            'Content-Disposition' => 'inline; filename="' . $downloadName . '"',
+        ];
+
+        return response()->stream(function () use ($stream) {
+            fpassthru($stream);
+            if (is_resource($stream)) {
+                fclose($stream);
+            }
+        }, 200, $headers);
     }
 
     public function analyzeComputerAssetInvoice(Request $request): RedirectResponse
@@ -4396,7 +4532,7 @@ SVG;
 
     private function normalizeImportHeader(string $header): string
     {
-        $header = Str::of($header)
+        $header = Str::of(Str::ascii($header))
             ->replaceMatches('/^\x{FEFF}/u', '')
             ->trim()
             ->lower()
@@ -4405,25 +4541,284 @@ SVG;
             ->toString();
 
         return match ($header) {
-            'sede', 'sede_id', 'sucursal', 'branch', 'branchid' => 'branch_id',
-            'tipo', 'tipo_equipo', 'equipmenttype' => 'equipment_type',
-            'etiqueta', 'assettag' => 'asset_tag',
-            'serie', 'numero_serie', 'serial', 'serialnumber' => 'serial_number',
+            'sede', 'sede_id', 'sucursal', 'branch', 'branch_id', 'branchid' => 'branch_id',
+            'sede_nombre', 'nombre_sede', 'sucursal_nombre', 'nombre_sucursal', 'branch_name', 'branchname' => 'branch_name',
+            'tipo', 'tipo_equipo', 'equipment_type', 'equipmenttype' => 'equipment_type',
+            'etiqueta', 'asset_tag', 'assettag' => 'asset_tag',
+            'serie', 'numero_serie', 'numero_serial', 'numero_de_serie', 'num_serie', 'nro_serie', 'n_de_serie', 'no_serie', 'no_de_serie', 'serial', 'serial_no', 'serialnumber', 'serial_number' => 'serial_number',
             'marca' => 'brand',
             'modelo' => 'model',
             'procesador' => 'cpu',
-            'ram' => 'ram_gb',
-            'tipo_almacenamiento', 'storage' => 'storage_type',
-            'almacenamiento_gb', 'disco_gb' => 'storage_gb',
+            'ram', 'ram_gb' => 'ram_gb',
+            'tipo_almacenamiento', 'storage', 'storage_type' => 'storage_type',
+            'almacenamiento_gb', 'disco_gb', 'storage_gb' => 'storage_gb',
             'sistema_operativo' => 'operating_system',
-            'office', 'version_office' => 'office_version',
-            'orden_compra', 'numero_orden_compra', 'oc', 'purchaseordernumber' => 'purchase_order_number',
+            'office', 'version_office', 'office_version' => 'office_version',
+            'orden_compra', 'numero_orden_compra', 'purchase_order_number', 'oc', 'purchaseordernumber' => 'purchase_order_number',
             'proveedor', 'supplier' => 'supplier',
-            'fecha_compra' => 'purchase_date',
-            'garantia_hasta', 'fecha_garantia' => 'warranty_expires_at',
-            'observaciones', 'notas' => 'notes',
+            'factura', 'numero_factura', 'folio_factura', 'invoice_folio', 'invoicefolio' => 'invoice_folio',
+            'fecha_compra', 'purchase_date' => 'purchase_date',
+            'garantia_hasta', 'fecha_garantia', 'warranty_expires_at' => 'warranty_expires_at',
+            'observaciones', 'notas', 'notes' => 'notes',
             default => $header,
         };
+    }
+
+    private function parseAssetImportFile(UploadedFile $file): array
+    {
+        $extension = Str::lower((string) $file->getClientOriginalExtension());
+        $filePath = $file->getRealPath();
+
+        if (!$filePath || !is_file($filePath)) {
+            throw ValidationException::withMessages([
+                'asset_import_file' => 'No fue posible leer el archivo cargado.',
+            ]);
+        }
+
+        if (in_array($extension, ['csv', 'txt'], true)) {
+            $handle = fopen($filePath, 'rb');
+            if ($handle === false) {
+                throw ValidationException::withMessages([
+                    'asset_import_file' => 'No fue posible abrir el archivo CSV cargado.',
+                ]);
+            }
+
+            $delimiter = $this->detectCsvDelimiter((string) (fgets($handle) ?: ''));
+            rewind($handle);
+
+            $rawRows = [];
+            while (($row = fgetcsv($handle, 0, $delimiter)) !== false) {
+                $rawRows[] = $row;
+            }
+            fclose($handle);
+
+            [$headers, $rows] = $this->extractImportHeadersAndRows($rawRows);
+
+            return ['headers' => $headers, 'rows' => $rows];
+        }
+
+        try {
+            $spreadsheet = IOFactory::load($filePath);
+            $bestHeaders = [];
+            $bestRows = [];
+            $bestScore = -1;
+
+            foreach ($spreadsheet->getAllSheets() as $sheet) {
+                $sheetRows = $sheet->toArray(null, true, true, false);
+                [$headers, $rows, $score] = $this->extractImportHeadersAndRows($sheetRows, true);
+                if ($score > $bestScore) {
+                    $bestScore = $score;
+                    $bestHeaders = $headers;
+                    $bestRows = $rows;
+                }
+            }
+
+            $spreadsheet->disconnectWorksheets();
+            unset($spreadsheet);
+        } catch (\Throwable) {
+            throw ValidationException::withMessages([
+                'asset_import_file' => 'No fue posible leer el archivo de Excel. Verifica que no esté dañado.',
+            ]);
+        }
+
+        if ($bestHeaders === []) {
+            return ['headers' => [], 'rows' => []];
+        }
+
+        return [
+            'headers' => $bestHeaders,
+            'rows' => $bestRows,
+        ];
+    }
+
+    private function extractImportHeadersAndRows(array $rawRows, bool $withScore = false): array
+    {
+        if ($rawRows === []) {
+            return $withScore ? [[], [], -1] : [[], []];
+        }
+
+        $headerIndex = $this->detectImportHeaderRowIndex($rawRows);
+        if ($headerIndex < 0 || !isset($rawRows[$headerIndex]) || !is_array($rawRows[$headerIndex])) {
+            return $withScore ? [[], [], -1] : [[], []];
+        }
+
+        $normalizedHeaders = [];
+        foreach ($rawRows[$headerIndex] as $index => $headerValue) {
+            $normalized = $this->normalizeImportHeader((string) $headerValue);
+            if ($normalized === '') {
+                $normalized = 'column_' . ($index + 1);
+            }
+
+            if (in_array($normalized, $normalizedHeaders, true)) {
+                $normalized .= '_' . ($index + 1);
+            }
+
+            $normalizedHeaders[] = $normalized;
+        }
+
+        $rows = array_slice($rawRows, $headerIndex + 1);
+        $score = $this->scoreImportHeaderRow($normalizedHeaders);
+
+        return $withScore
+            ? [$normalizedHeaders, $rows, $score]
+            : [$normalizedHeaders, $rows];
+    }
+
+    private function detectImportHeaderRowIndex(array $rows): int
+    {
+        $maxScan = min(30, count($rows));
+        $bestIndex = -1;
+        $bestScore = -1;
+
+        for ($index = 0; $index < $maxScan; $index++) {
+            $row = $rows[$index] ?? null;
+            if (!is_array($row)) {
+                continue;
+            }
+
+            $normalized = array_map(fn ($value) => $this->normalizeImportHeader((string) $value), $row);
+            $score = $this->scoreImportHeaderRow($normalized);
+
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $bestIndex = $index;
+            }
+        }
+
+        if ($bestScore <= 0) {
+            return 0;
+        }
+
+        return $bestIndex;
+    }
+
+    private function scoreImportHeaderRow(array $normalizedHeaders): int
+    {
+        $normalizedHeaders = collect($normalizedHeaders)
+            ->map(fn ($header) => trim((string) $header))
+            ->filter(fn ($header) => $header !== '')
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($normalizedHeaders === []) {
+            return 0;
+        }
+
+        $knownHeaders = [
+            'branch_id',
+            'equipment_type',
+            'asset_tag',
+            'hostname',
+            'serial_number',
+            'brand',
+            'model',
+            'cpu',
+            'ram_gb',
+            'storage_type',
+            'storage_gb',
+            'operating_system',
+            'office_version',
+            'purchase_order_number',
+            'supplier',
+            'purchase_date',
+            'warranty_expires_at',
+            'notes',
+        ];
+
+        $knownCount = count(array_intersect($knownHeaders, $normalizedHeaders));
+        $hasSerial = in_array('serial_number', $normalizedHeaders, true);
+        $hasAssetIdentity = in_array('asset_tag', $normalizedHeaders, true) || in_array('hostname', $normalizedHeaders, true);
+
+        return $knownCount + ($hasSerial ? 8 : 0) + ($hasAssetIdentity ? 2 : 0);
+    }
+
+    private function normalizeImportSerial(mixed $value): ?string
+    {
+        $serial = Str::of((string) ($value ?? ''))
+            ->trim()
+            ->toString();
+
+        if ($serial === '') {
+            return null;
+        }
+
+        return Str::upper($serial);
+    }
+
+    private function mergeImportExtraColumnsIntoDetails(array &$details, array $data): void
+    {
+        $knownColumns = [
+            'branch_id',
+            'equipment_type',
+            'asset_tag',
+            'hostname',
+            'serial_number',
+            'brand',
+            'model',
+            'cpu',
+            'ram_gb',
+            'storage_type',
+            'storage_gb',
+            'operating_system',
+            'office_version',
+            'purchase_order_number',
+            'supplier',
+            'purchase_date',
+            'warranty_expires_at',
+            'notes',
+        ];
+
+        $dynamicColumns = [];
+        foreach ($data as $key => $value) {
+            if (in_array($key, $knownColumns, true)) {
+                continue;
+            }
+
+            $normalizedValue = $this->normalizeImportText($value);
+            if ($normalizedValue === null) {
+                continue;
+            }
+
+            $dynamicColumns[$key] = $normalizedValue;
+        }
+
+        if ($dynamicColumns === []) {
+            return;
+        }
+
+        $existingDynamic = data_get($details, 'import.extra_columns', []);
+        if (!is_array($existingDynamic)) {
+            $existingDynamic = [];
+        }
+
+        data_set($details, 'import.extra_columns', array_merge($existingDynamic, $dynamicColumns));
+    }
+
+    private function storeAssetImportInvoiceDocument(?UploadedFile $file): ?array
+    {
+        if (!$file instanceof UploadedFile) {
+            return null;
+        }
+
+        $originalName = trim((string) $file->getClientOriginalName());
+        $safeName = pathinfo($originalName, PATHINFO_FILENAME);
+        $extension = Str::lower((string) $file->getClientOriginalExtension());
+        $slug = Str::slug($safeName);
+        if ($slug === '') {
+            $slug = 'factura';
+        }
+
+        $storedName = now()->format('YmdHis') . '-' . Str::random(8) . '-' . $slug . ($extension !== '' ? ('.' . $extension) : '');
+        $storedPath = $file->storeAs('asset-invoices/' . now()->format('Y/m'), $storedName, ['disk' => 'public']);
+
+        return [
+            'disk' => 'public',
+            'path' => $storedPath,
+            'original_name' => $originalName !== '' ? $originalName : $storedName,
+            'mime_type' => (string) ($file->getClientMimeType() ?? ''),
+            'uploaded_at' => now()->toIso8601String(),
+        ];
     }
 
     private function combineImportCsvRow(array $headers, array $row): array
@@ -4468,8 +4863,144 @@ SVG;
         return (int) $text;
     }
 
+    private function resolveImportBranchId(mixed $branchIdValue, mixed $branchNameValue, ?array $branchScopeIds): ?int
+    {
+        $numericBranchId = $this->parseImportInteger($branchIdValue);
+        if ($numericBranchId !== null) {
+            return $numericBranchId;
+        }
+
+        $candidateValues = [
+            $this->normalizeImportText($branchNameValue),
+            $this->normalizeImportText($branchIdValue),
+        ];
+
+        foreach ($candidateValues as $candidateValue) {
+            if ($candidateValue === null) {
+                continue;
+            }
+
+            $normalizedCandidate = Str::of(Str::ascii($candidateValue))
+                ->lower()
+                ->replaceMatches('/\s+/', ' ')
+                ->trim()
+                ->toString();
+
+            if ($normalizedCandidate === '') {
+                continue;
+            }
+
+            $exact = Branch::query()
+                ->when($branchScopeIds !== null, fn (Builder $query) => $query->whereIn('id', $branchScopeIds))
+                ->whereRaw('LOWER(name) = ?', [mb_strtolower($candidateValue)])
+                ->value('id');
+            if ($exact !== null) {
+                return (int) $exact;
+            }
+
+            $normalizedMatch = Branch::query()
+                ->when($branchScopeIds !== null, fn (Builder $query) => $query->whereIn('id', $branchScopeIds))
+                ->get(['id', 'name'])
+                ->first(function (Branch $branch) use ($normalizedCandidate) {
+                    $branchName = Str::of(Str::ascii((string) $branch->name))
+                        ->lower()
+                        ->replaceMatches('/\s+/', ' ')
+                        ->trim()
+                        ->toString();
+
+                    return $branchName === $normalizedCandidate;
+                });
+
+            if ($normalizedMatch instanceof Branch) {
+                return (int) $normalizedMatch->id;
+            }
+        }
+
+        return null;
+    }
+
+    private function resolveImportEquipmentType(mixed $value, ?string $existingType = null): array
+    {
+        $options = ComputerAsset::equipmentTypeOptions();
+        $existingType = is_string($existingType) ? trim($existingType) : null;
+        $rawValue = $this->normalizeImportText($value);
+
+        if ($rawValue === null) {
+            $fallback = ($existingType !== null && array_key_exists($existingType, $options))
+                ? $existingType
+                : (array_key_exists('desktop', $options) ? 'desktop' : array_key_first($options));
+
+            return [$fallback, false, null];
+        }
+
+        $needle = $this->normalizeImportLookupToken($rawValue);
+
+        foreach ($options as $key => $label) {
+            if ($needle === $this->normalizeImportLookupToken((string) $key)) {
+                return [$key, false, null];
+            }
+
+            if ($needle === $this->normalizeImportLookupToken((string) $label)) {
+                return [$key, false, null];
+            }
+        }
+
+        $aliases = [
+            'pc' => 'desktop',
+            'computadora' => 'desktop',
+            'equipo_de_computo' => 'desktop',
+            'cpu' => 'desktop',
+            'portatil' => 'laptop',
+            'notebook' => 'laptop',
+            'lap' => 'laptop',
+            'servidor' => 'server',
+            'estacion_de_trabajo' => 'workstation',
+            'todo_en_uno' => 'aio',
+            'all_in_one' => 'aio',
+            'thinclient' => 'thin-client',
+            'cliente_ligero' => 'thin-client',
+            'pantalla' => 'monitor',
+            'diadema' => 'headset',
+            'telefono' => 'phone',
+            'movil' => 'phone',
+            'celular' => 'phone',
+        ];
+
+        $mapped = $aliases[$needle] ?? null;
+        if ($mapped !== null && array_key_exists($mapped, $options)) {
+            return [$mapped, false, null];
+        }
+
+        $fallback = ($existingType !== null && array_key_exists($existingType, $options))
+            ? $existingType
+            : (array_key_exists('other', $options)
+                ? 'other'
+                : (array_key_exists('desktop', $options) ? 'desktop' : array_key_first($options)));
+
+        return [$fallback, true, $rawValue];
+    }
+
+    private function normalizeImportLookupToken(string $value): string
+    {
+        return Str::of(Str::ascii($value))
+            ->lower()
+            ->replaceMatches('/[^a-z0-9]+/u', '_')
+            ->trim('_')
+            ->toString();
+    }
+
     private function normalizeImportDate(mixed $value): ?string
     {
+        if (is_numeric($value)) {
+            $excelValue = (float) $value;
+            if ($excelValue > 0) {
+                try {
+                    return Carbon::instance(ExcelDate::excelToDateTimeObject($excelValue))->toDateString();
+                } catch (\Throwable) {
+                }
+            }
+        }
+
         $text = trim((string) ($value ?? ''));
         if ($text === '') {
             return null;
