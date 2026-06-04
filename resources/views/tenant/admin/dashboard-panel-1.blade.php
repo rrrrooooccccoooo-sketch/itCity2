@@ -3,7 +3,10 @@
 @section('content')
 @php
     $canInventoryManage = auth()->user()?->hasTenantPermission('inventory.manage') ?? false;
+    $canInventoryView   = $canInventoryManage || (auth()->user()?->hasTenantPermission('inventory.view') ?? false);
     $canTopologyManage  = auth()->user()?->hasTenantPermission('topology.manage') ?? false;
+    $canTopologyView    = $canTopologyManage || (auth()->user()?->hasTenantPermission('topology.view') ?? false);
+    $canMonitoringView  = auth()->user()?->hasTenantPermission('monitoring.view') ?? false;
     $canInventoryCatalogsView = (auth()->user()?->hasTenantPermission('inventory.catalogs.view') ?? false) || $canInventoryManage;
     $canInventoryCatalogsManage = (auth()->user()?->hasTenantPermission('inventory.catalogs.manage') ?? false) || $canInventoryManage;
     $incomingTransferPendingCount = isset($incomingTransferRequests) ? (int) $incomingTransferRequests->count() : 0;
@@ -59,62 +62,84 @@
             <span class="sticky-navigation-label">Módulos</span>
             <ul class="nav nav-pills flex-nowrap gap-1" role="tablist">
             <li class="nav-item">
+                @if ($canMonitoringView)
                 <a href="#section-monitoring" class="nav-link {{ $activateAssetsTab ? '' : 'active' }} small" data-bs-toggle="tab">
                     <i class="bi bi-speedometer2"></i> Monitoreo
                 </a>
+                @endif
             </li>
             <li class="nav-item">
+                @if ($canInventoryView)
                 <a href="#section-assets" class="nav-link {{ $activateAssetsTab ? 'active' : '' }} small" data-bs-toggle="tab">
                     <i class="bi bi-hdd"></i> Inventario
                     @if ($canInventoryManage && $incomingTransferPendingCount > 0)
                         <span class="badge text-bg-danger ms-1">{{ $incomingTransferPendingCount }}</span>
                     @endif
                 </a>
+                @endif
             </li>
             <li class="nav-item">
+                @if ($canTopologyView)
                 <a href="#section-nodes" class="nav-link small" data-bs-toggle="tab">
                     <i class="bi bi-hdd-network"></i> Nodos
                 </a>
+                @endif
             </li>
             <li class="nav-item">
+                @if ($canTopologyView)
                 <a href="#section-spaces" class="nav-link small" data-bs-toggle="tab">
                     <i class="bi bi-door-closed"></i> Espacios físicos
                 </a>
+                @endif
             </li>
             <li class="nav-item">
+                @if ($canTopologyView)
                 <a href="#section-branches" class="nav-link small" data-bs-toggle="tab">
                     <i class="bi bi-diagram-3"></i> Sedes
                 </a>
+                @endif
             </li>
             <li class="nav-item">
+                @if ($canTopologyView)
                 <a href="#section-node-types" class="nav-link small" data-bs-toggle="tab">
                     <i class="bi bi-diagram-2"></i> Tipos de nodo
                 </a>
+                @endif
             </li>
             <li class="nav-item">
+                @if ($canTopologyView)
                 <a href="#section-floor-plans" class="nav-link small" data-bs-toggle="tab">
                     <i class="bi bi-diagram-3"></i> Planos
                 </a>
+                @endif
             </li>
             <li class="nav-item">
+                @if ($canInventoryCatalogsView)
                 <a href="#section-equipment-brands" class="nav-link small" data-bs-toggle="tab">
                     <i class="bi bi-box2"></i> Marcas
                 </a>
+                @endif
             </li>
             <li class="nav-item">
+                @if ($canInventoryCatalogsView)
                 <a href="#section-equipment-models" class="nav-link small" data-bs-toggle="tab">
                     <i class="bi bi-boxes"></i> Modelos
                 </a>
+                @endif
             </li>
             <li class="nav-item">
+                @if ($canInventoryCatalogsView)
                 <a href="#section-software" class="nav-link small" data-bs-toggle="tab">
                     <i class="bi bi-app-indicator"></i> Sistemas
                 </a>
+                @endif
             </li>
             <li class="nav-item">
+                @if ($canTopologyManage)
                 <a href="#section-relations" class="nav-link small" data-bs-toggle="tab">
                     <i class="bi bi-share"></i> Relaciones
                 </a>
+                @endif
             </li>
             </ul>
         </div>
@@ -124,6 +149,7 @@
     <div class="tab-content">
 
         {{-- ===== PHYSICAL SPACES SECTION (1) ===== --}}
+        @if ($canTopologyView)
         <div class="tab-pane fade" id="section-spaces">
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <div>
@@ -230,8 +256,10 @@
                 </div>
             </div>
         </div>
+        @endif
 
         {{-- ===== BRANCHES SECTION (2) ===== --}}
+        @if ($canTopologyView)
         <div class="tab-pane fade" id="section-branches">
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <div>
@@ -292,7 +320,9 @@
                 </div>
             </div>
         </div>
+        @endif
         {{-- ===== NODE TYPES SECTION (3) ===== --}}
+        @if ($canTopologyView)
         <div class="tab-pane fade" id="section-node-types">
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <div>
@@ -353,8 +383,10 @@
                 </div>
             </div>
         </div>
+        @endif
 
         {{-- ===== NODES SECTION (4) ===== --}}
+        @if ($canTopologyView)
         <div class="tab-pane fade" id="section-nodes">
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <div>
@@ -452,8 +484,10 @@
                 </div>
             </div>
         </div>
+        @endif
 
         {{-- ===== MONITORING SECTION (5) ===== --}}
+        @if ($canMonitoringView)
         <div class="tab-pane fade {{ $activateAssetsTab ? '' : 'show active' }}" id="section-monitoring">
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <div>
@@ -580,8 +614,10 @@
                 </div>
             </div>
         </div>
+        @endif
 
         {{-- ===== FLOOR PLANS SECTION (6) ===== --}}
+        @if ($canTopologyView)
         <div class="tab-pane fade" id="section-floor-plans">
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <div>
@@ -660,8 +696,10 @@
                 </div>
             </div>
         </div>
+        @endif
 
         {{-- ===== EQUIPMENT BRANDS SECTION (7) ===== --}}
+        @if ($canInventoryCatalogsView)
         <div class="tab-pane fade" id="section-equipment-brands">
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <div>
@@ -724,8 +762,10 @@
                 </div>
             </div>
         </div>
+        @endif
 
         {{-- ===== EQUIPMENT MODELS SECTION (8) ===== --}}
+        @if ($canInventoryCatalogsView)
         <div class="tab-pane fade" id="section-equipment-models">
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <div>
@@ -828,8 +868,10 @@
                 </div>
             </div>
         </div>
+        @endif
 
         {{-- ===== ASSETS/INVENTORY SECTION (9) ===== --}}
+        @if ($canInventoryView)
         <div class="tab-pane fade {{ $activateAssetsTab ? 'show active' : '' }}" id="section-assets">
             <div class="inventory-compact-toolbar mb-2">
                 <div class="small text-muted">Vista compacta: oculta paneles para ver mas equipos en pantalla.</div>
@@ -1680,8 +1722,10 @@
                 </div>
             </div>
         </div>
+        @endif
 
         {{-- ===== SOFTWARE SYSTEMS SECTION (10) ===== --}}
+        @if ($canInventoryCatalogsView)
         <div class="tab-pane fade" id="section-software">
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <div>
@@ -1731,8 +1775,10 @@
                 </div>
             </div>
         </div>
+        @endif
 
         {{-- ===== RELATIONS SECTION (11) ===== --}}
+        @if ($canTopologyManage)
         <div class="tab-pane fade" id="section-relations">
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <div>
@@ -1808,6 +1854,7 @@
                 </div>
             </div>
         </div>
+        @endif
 
     </div>
 
